@@ -54,9 +54,6 @@ const InstancesByProcess: React.FC = () => {
 
 				return {
 					id: `${item.processDefinitionId}:${item.tenantId}`,
-					name: item.latestProcessDefinitionName || item.processDefinitionId,
-					activeCount: item.activeInstancesWithoutIncidentCount,
-					incidentsCount: item.activeInstancesWithIncidentCount,
 					content: (
 						<Link
 							to="/operate/processes"

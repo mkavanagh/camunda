@@ -13,19 +13,15 @@ import {useRunningInstancesCount} from '../useRunningInstancesCount';
 import {NoInstancesEmptyState} from './NoInstancesEmptyState';
 import {MetricPanel} from '../MetricPanel/shadcn.components/MetricPanel';
 import {InstancesByProcess} from '../InstancesByProcess/shadcn.components/InstancesByProcess';
+import {IncidentsByError} from '../IncidentsByError/shadcn.components/IncidentsByError';
 
 type SnapshotOnlyRow = {id: string; name: string};
 
-// IncidentsByError lands in a later PR. These mock rows stand in until then, so the tile
-// shows realistic populated content rather than an indefinite loading skeleton. The column
-// header carries the tile's own title — an empty header fails the "table headers have
-// discernible text" accessibility check.
+// InstancesByProcess and IncidentsByError now both render their own data. This placeholder
+// column is only needed for the no-instances DataTable's loading skeleton — a DataTable with
+// zero columns collapses to no height, so it needs at least one cell to paint into.
 const snapshotOnlyColumns = (header: string): DataTableColumn<SnapshotOnlyRow>[] => [
 	{id: 'name', header, cell: ({row}) => row.original.name},
-];
-const SNAPSHOT_ONLY_INCIDENT_ROWS: SnapshotOnlyRow[] = [
-	{id: 'sample-incident-1', name: 'Connection timeout'},
-	{id: 'sample-incident-2', name: 'Null pointer exception'},
 ];
 
 const Dashboard: React.FC = () => {
@@ -56,16 +52,7 @@ const Dashboard: React.FC = () => {
 					) : (
 						<InstancesByProcess />
 					)}
-					{!hasNoInstances && (
-						// Real columns/data for IncidentsByError — wired in a later PR
-						<DataTable
-							aria-label={t('operate.dashboard.incidentsByErrorTitle')}
-							columns={snapshotOnlyColumns(t('operate.dashboard.incidentsByErrorTitle'))}
-							data={SNAPSHOT_ONLY_INCIDENT_ROWS}
-							getRowId={(row) => row.id}
-							className="flex flex-col overflow-hidden"
-						/>
-					)}
+					{!hasNoInstances && <IncidentsByError />}
 				</div>
 			</div>
 		</PageLayout>

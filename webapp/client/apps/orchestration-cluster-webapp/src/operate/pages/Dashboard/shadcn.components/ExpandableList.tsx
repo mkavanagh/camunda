@@ -345,5 +345,4 @@ const ExpandableList: React.FC<Props> = ({
 };
 
 export {ExpandableList};
-// TODO(#63423, #63424): delete once InstancesByProcess/IncidentsByError land in PR8
 export type {ExpandableListRow};
