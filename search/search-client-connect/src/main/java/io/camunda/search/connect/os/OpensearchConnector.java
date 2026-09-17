@@ -30,6 +30,7 @@ import org.apache.hc.client5.http.ssl.NoopHostnameVerifier;
 import org.apache.hc.core5.http.HttpHost;
 import org.apache.hc.core5.http.HttpRequestInterceptor;
 import org.apache.hc.core5.http.nio.ssl.TlsStrategy;
+import org.apache.hc.core5.reactor.IOReactorConfig;
 import org.apache.hc.core5.util.Timeout;
 import org.opensearch.client.opensearch.OpenSearchAsyncClient;
 import org.opensearch.client.opensearch.OpenSearchClient;
@@ -180,6 +181,17 @@ public final class OpensearchConnector {
     }
 
     setupConnectionManager(httpAsyncClientBuilder, osConfig);
+<<<<<<< HEAD
+=======
+    setupKeepAlive(httpAsyncClientBuilder);
+
+    final var proxyConfig = osConfig.getProxy();
+    if (proxyConfig != null && proxyConfig.isEnabled()) {
+      setupProxy(httpAsyncClientBuilder, proxyConfig);
+      addPreemptiveProxyAuthInterceptor(httpAsyncClientBuilder, proxyConfig);
+    }
+
+>>>>>>> 7182d24e (fix: keep idle Elasticsearch and OpenSearch connections alive)
     return httpAsyncClientBuilder;
   }
 
@@ -257,6 +269,17 @@ public final class OpensearchConnector {
     }
 
     httpAsyncClientBuilder.setConnectionManager(connectionManagerBuilder.build());
+  }
+
+  /**
+   * Enables TCP keepalive on the NIO sockets, which the Apache HttpAsyncClient leaves off by
+   * default. Without it, a firewall or NAT device between this client and OpenSearch drops its
+   * connection tracking entry for an idle connection without sending a RST or FIN, and the next
+   * request to reuse that pooled connection blocks until the response timeout expires.
+   */
+  private void setupKeepAlive(final HttpAsyncClientBuilder httpAsyncClientBuilder) {
+    httpAsyncClientBuilder.setIOReactorConfig(
+        IOReactorConfig.custom().setSoKeepAlive(true).build());
   }
 
   private TlsStrategy buildTlsStrategy(final SecurityConfiguration configuration) {
