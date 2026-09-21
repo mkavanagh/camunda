@@ -24,6 +24,7 @@ import io.micrometer.core.instrument.Measurement;
 import io.micrometer.core.instrument.MeterRegistry;
 import java.time.Duration;
 import java.util.Objects;
+import org.agrona.CloseHelper;
 import org.assertj.core.data.Offset;
 import org.awaitility.Awaitility;
 import org.junit.jupiter.api.AutoClose;
@@ -126,6 +127,15 @@ abstract class AbstractAsyncReplicationIT<R extends ReplicationClusterContainer>
     exporterAcknowledgedAll();
   }
 
+<<<<<<< HEAD
+=======
+  @AfterAll
+  void afterAll() {
+    // preserve order, first shutdown Camunda, then the database
+    CloseHelper.closeAll(camundaClient, testInstance, cluster);
+  }
+
+>>>>>>> 8967e406 (fix: clean up failed async replication setup safely)
   protected void startProcessInstances(final int count) {
     for (int i = 0; i < count; i++) {
       startProcessInstance(camundaClient, "service_tasks_v1", "{\"xyz\":\"foo\"}");
