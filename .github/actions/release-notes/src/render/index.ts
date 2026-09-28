@@ -211,7 +211,7 @@ function versionRange(updates: readonly DependencyUpdate[]): { from: string; to:
 }
 
 function collapseDependencies(prs: readonly RenderPrInput[]): RenderEntry[] {
-  const byName = new Map<string, { prNumbers: number[]; updates: DependencyUpdate[]; groupName: string }>();
+  const byName = new Map<string, { prNumbers: number[]; updates: DependencyUpdate[]; groupName: string; breaking: boolean }>();
   for (const pr of prs) {
     const byNameInThisPr = new Map<string, DependencyUpdate[]>();
     for (const update of pr.dependencies ?? []) {
@@ -220,9 +220,10 @@ function collapseDependencies(prs: readonly RenderPrInput[]): RenderEntry[] {
       byNameInThisPr.set(update.name, rows);
     }
     for (const [name, rows] of byNameInThisPr) {
-      const existing = byName.get(name) ?? { prNumbers: [], updates: [], groupName: groupNameFor(pr) };
+      const existing = byName.get(name) ?? { prNumbers: [], updates: [], groupName: groupNameFor(pr), breaking: false };
       if (!existing.prNumbers.includes(pr.number)) existing.prNumbers.push(pr.number);
       existing.updates.push(reconcileDuplicateRows(rows)); // one entry per PR, walk order preserved
+      existing.breaking ||= pr.breaking;
       byName.set(name, existing);
     }
   }
@@ -232,7 +233,7 @@ function collapseDependencies(prs: readonly RenderPrInput[]): RenderEntry[] {
     title: `${name}: ${versionRange(group.updates).from} → ${versionRange(group.updates).to}`,
     issueNumbers: [],
     prNumbers: group.prNumbers,
-    breaking: false,
+    breaking: group.breaking,
     delivered: true,
   }));
 }
@@ -272,16 +273,19 @@ function describeGuardFailure(bucket: readonly RenderPrInput[]): string {
   return parts.join(' ');
 }
 
-export function render(
-  prs: readonly RenderPrInput[],
-  unattributed: readonly RenderPrInput[],
-  options: RenderOptions,
-): RenderResult {
+export function isUnattributed(pr: RenderPrInput): boolean {
+  // Excluded merge-type PRs must not trip the attribution guard.
+  return pr.section !== null && (pr.attributionSource === 'unattributed' || pr.attributionSource === 'resolutionFailed');
+}
+
+/** `all` must stay in newest-first walk order, including unattributed PRs. */
+export function render(all: readonly RenderPrInput[], options: RenderOptions): RenderResult {
+  const prs = all.filter((pr) => !isUnattributed(pr));
+  const unattributed = all.filter(isUnattributed);
   const guardFailed = unattributed.length > 0 && (!options.allowUnattributed || !options.unattributedReason);
   const failureReason = guardFailed ? describeGuardFailure(unattributed) : undefined;
   const unattributedReason = options.unattributedReason ?? '';
 
-  const all = [...prs, ...unattributed];
   const customerPrs = prs.filter((pr) => pr.visibility === 'customer' && pr.section !== null);
   const assetPrs = all.filter((pr) => pr.section !== null);
 

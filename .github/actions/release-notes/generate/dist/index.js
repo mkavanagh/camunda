@@ -450,9 +450,6 @@ async function run() {
                 deliveryPath: output.attribution.deliveryPath,
                 declaredCloses: pr.closingIssuesReferences,
             },
-            // A merge-type PR (section: null) is excluded from every output, so it must never trip the unattributed guard.
-            bucketed: output.categorization.section !== null &&
-                (output.attribution.source === 'unattributed' || output.attribution.source === 'resolutionFailed'),
             warnings,
         };
     };
@@ -493,8 +490,7 @@ async function run() {
     }
     const issueFacts = await graphql.fetchIssueFacts([...wantedIssues]);
     core.info(`Read labels and the close event of ${issueFacts.size} of ${wantedIssues.size} referenced issue(s).`);
-    const attributed = [];
-    const unattributed = [];
+    const renderPrs = [];
     const issueFactsWarnings = [];
     for (const entry of processed) {
         if (!entry)
@@ -515,12 +511,12 @@ async function run() {
             // positively open only — an issue absent from the lookup is not evidence of anything
             openIssueNumbers: entry.renderPr.issueNumbers.filter((issueNumber) => issueFacts.get(issueNumber)?.closed === false),
         };
-        (entry.bucketed ? unattributed : attributed).push(renderPr);
+        renderPrs.push(renderPr);
     }
     for (const warning of issueFactsWarnings)
         core.warning(warning);
     const auditWarnings = [...rangeReasons, ...processed.flatMap((entry) => entry?.warnings ?? []), ...issueFactsWarnings];
-    const result = (0, render_1.render)(attributed, unattributed, {
+    const result = (0, render_1.render)(renderPrs, {
         version: input.targetVersion,
         allowUnattributed: input.allowUnattributed,
         unattributedReason: input.unattributedReason,
@@ -528,7 +524,8 @@ async function run() {
     });
     // Same condition render() already folded into audit.json — surfaced here
     // too so it isn't only visible to someone who goes looking at that file.
-    const emptyBodyWarning = (0, render_1.emptyCustomerBodyWarning)(attributed.length > 0, result.customerBody);
+    const attributedCount = renderPrs.filter((pr) => !(0, render_1.isUnattributed)(pr)).length;
+    const emptyBodyWarning = (0, render_1.emptyCustomerBodyWarning)(attributedCount > 0, result.customerBody);
     if (emptyBodyWarning)
         core.warning(emptyBodyWarning);
     (0, node_fs_1.mkdirSync)(input.outputDir, { recursive: true }); // writeFileSync doesn't create the dir; recursive for a nested output-dir too
@@ -547,7 +544,7 @@ async function run() {
         .write();
     if (result.failureReason)
         throw new Error(result.failureReason); // fails only AFTER every diagnostic output exists on disk
-    core.info(`Generated release notes for ${input.targetVersion}: ${attributed.length} attributed PR(s).`);
+    core.info(`Generated release notes for ${input.targetVersion}: ${attributedCount} attributed PR(s).`);
 }
 run().catch((err) => core.setFailed(err instanceof Error ? err.message : String(err)));
 
@@ -1178,6 +1175,7 @@ function walkFirstParent(repoDir, baseline, target) {
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.SCHEMA_VERSION = void 0;
 exports.emptyCustomerBodyWarning = emptyCustomerBodyWarning;
+exports.isUnattributed = isUnattributed;
 exports.render = render;
 /**
  * Turns the attributed-and-categorized PR list into the outputs downstream
@@ -1333,10 +1331,11 @@ function collapseDependencies(prs) {
             byNameInThisPr.set(update.name, rows);
         }
         for (const [name, rows] of byNameInThisPr) {
-            const existing = byName.get(name) ?? { prNumbers: [], updates: [], groupName: groupNameFor(pr) };
+            const existing = byName.get(name) ?? { prNumbers: [], updates: [], groupName: groupNameFor(pr), breaking: false };
             if (!existing.prNumbers.includes(pr.number))
                 existing.prNumbers.push(pr.number);
             existing.updates.push(reconcileDuplicateRows(rows)); // one entry per PR, walk order preserved
+            existing.breaking ||= pr.breaking;
             byName.set(name, existing);
         }
     }
@@ -1345,7 +1344,7 @@ function collapseDependencies(prs) {
         title: `${name}: ${versionRange(group.updates).from} → ${versionRange(group.updates).to}`,
         issueNumbers: [],
         prNumbers: group.prNumbers,
-        breaking: false,
+        breaking: group.breaking,
         delivered: true,
     }));
 }
@@ -1375,11 +1374,17 @@ function describeGuardFailure(bucket) {
     parts.push('Set allow-unattributed=true with a non-empty unattributed-reason to override.');
     return parts.join(' ');
 }
-function render(prs, unattributed, options) {
+function isUnattributed(pr) {
+    // Excluded merge-type PRs must not trip the attribution guard.
+    return pr.section !== null && (pr.attributionSource === 'unattributed' || pr.attributionSource === 'resolutionFailed');
+}
+/** `all` must stay in newest-first walk order, including unattributed PRs. */
+function render(all, options) {
+    const prs = all.filter((pr) => !isUnattributed(pr));
+    const unattributed = all.filter(isUnattributed);
     const guardFailed = unattributed.length > 0 && (!options.allowUnattributed || !options.unattributedReason);
     const failureReason = guardFailed ? describeGuardFailure(unattributed) : undefined;
     const unattributedReason = options.unattributedReason ?? '';
-    const all = [...prs, ...unattributed];
     const customerPrs = prs.filter((pr) => pr.visibility === 'customer' && pr.section !== null);
     const assetPrs = all.filter((pr) => pr.section !== null);
     const customerBody = renderSectionedBody(customerPrs);
@@ -1432,6 +1437,7 @@ function render(prs, unattributed, options) {
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.GithubGraphqlResolver = exports.RetriesExhaustedError = exports.RATE_LIMITED_ERROR_TYPE = void 0;
 const github_1 = __nccwpck_require__(631);
+const warm_1 = __nccwpck_require__(579);
 const GRAPHQL_URL = 'https://api.github.com/graphql';
 /** `associatedPullRequests` walks branch history per commit; `pullRequest(number:)`
  *  is a direct lookup — an order of magnitude cheaper, so the two can't share
@@ -1643,7 +1649,7 @@ class GithubGraphqlResolver {
         const { query, variables } = this.buildBatchQuery(numbers, {
             varType: 'Int!',
             aliasPrefix: 'pr',
-            field: (ref) => `pullRequest(number: ${ref}) { number title body mergedAt baseRefName headRefName mergeCommit { oid } author { login __typename } labels(first: 20) { nodes { name } pageInfo { hasNextPage } } closingIssuesReferences(first: 20) { nodes { number } pageInfo { hasNextPage } } }`,
+            field: (ref) => `pullRequest(number: ${ref}) { number title body mergedAt baseRefName headRefName mergeCommit { oid } author { login __typename } labels(first: 20) { nodes { name } pageInfo { hasNextPage } } closingIssuesReferences(first: 20) { nodes { number repository { nameWithOwner } } pageInfo { hasNextPage } } }`,
         });
         const repository = await this.requestRepository(query, variables, speculative);
         return numbers.flatMap((number, i) => {
@@ -1670,7 +1676,9 @@ class GithubGraphqlResolver {
                     authorLogin: normalizeAuthorLogin(pr.author),
                     mergedAt: assertField(pr.mergedAt, `mergedAt on PR #${number}`),
                     labels: assertField(pr.labels?.nodes, `labels.nodes on PR #${number}`).map((label) => label.name),
-                    closingIssuesReferences: assertField(pr.closingIssuesReferences?.nodes, `closingIssuesReferences.nodes on PR #${number}`).map((issue) => issue.number),
+                    closingIssuesReferences: assertField(pr.closingIssuesReferences?.nodes, `closingIssuesReferences.nodes on PR #${number}`)
+                        .filter((issue) => (0, warm_1.isOwnRepo)(assertField(issue.repository?.nameWithOwner, `repository.nameWithOwner on closing issue #${issue.number} of PR #${number}`), `${this.owner}/${this.repo}`))
+                        .map((issue) => issue.number),
                     ...(truncatedFields.length > 0 ? { truncatedFields } : {}),
                 }];
         });

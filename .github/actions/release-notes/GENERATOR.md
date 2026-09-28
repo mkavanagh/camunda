@@ -281,7 +281,11 @@ Parsing rules that catch people out:
   `<!-- ... closes #1234 ... -->` block lives inside `## Related issues` and is invisible in the
   rendered body, so a pull request that left the boilerplate untouched must not be attributed to
   whatever issue the comment names.
-- **Cross-repo references never attribute.** `camunda/other#7` is recorded and reported, never used.
+- **Cross-repo references never attribute.** Parsed references such as `camunda/other#7` are recorded
+  and reported, never used. Native `closingIssuesReferences` are filtered by repository identity
+  before any local issue lookup, including references to private repositories. A foreign issue
+  number never becomes a same-numbered local issue. Without a valid local reference, the normal
+  opt-out, bot-exemption, or unattributed handling applies.
 - **A `Backport of #N` marker is a delivery-hop signal, not an attribution reference.**
 - At most **20** references per pull request are resolved (`MAX_REFS`), prioritised so closing
   references survive the cap ahead of merely informational ones, and at most **5** in flight
@@ -443,7 +447,9 @@ it ended, citing every pull request that moved it:
 ```
 
 Across pull requests the walk order settles which update came first — newest first, so
-the earliest is last. Within one pull request it cannot: a grouped renovate body lists
+the earliest is last. The renderer receives one ordered list before separating attributed
+and unattributed pull requests; the full asset preserves their interleaving even when the
+unattributed guard is overridden. Within one pull request it cannot: a grouped renovate body lists
 rows per lockfile, not in time order, and the positional answer gave
 `browserslist: 4.28.2` when the release really started at `4.28.1`. So versions are
 compared numerically where they can be, and walk order is the fallback for anything
@@ -464,8 +470,10 @@ Features · Bug Fixes · Performance · Documentation · Dependency updates · R
 Changes without a tracked issue · Maintenance · Uncategorized
 ```
 
-Breaking changes are additionally hoisted into a `## Breaking changes` section at the top. An opt-out
-pull request is grouped under `Changes without a tracked issue`, never under its type's section.
+Breaking changes are additionally hoisted into a `## Breaking changes` section at the top.
+A grouped dependency entry is breaking if any contributing pull request is marked breaking.
+An opt-out pull request is grouped under `Changes without a tracked issue`, never under its type's
+section.
 
 The two bodies differ by audience:
 

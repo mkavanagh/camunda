@@ -20,7 +20,7 @@ function pr(overrides: Partial<RenderPrInput> = {}): RenderPrInput {
 }
 
 test('a single closing PR appears in the customer body under its section, linking the issue', () => {
-  const result = render([pr({ number: 1, issueNumbers: [100], closesIssueNumbers: [100] })], [], {
+  const result = render([pr({ number: 1, issueNumbers: [100], closesIssueNumbers: [100] })], {
     version: '8.8.30',
     allowUnattributed: false,
   });
@@ -33,7 +33,7 @@ test('an unattributed bucket reports a failure reason by default, but still rend
   const unattributed = [pr({ number: 2, attributionSource: 'unattributed', issueNumbers: [] })];
 
   // when
-  const result = render([], unattributed, { version: '8.8.30', allowUnattributed: false });
+  const result = render(unattributed, { version: '8.8.30', allowUnattributed: false });
 
   // then — the failure names the pull request, and every output still exists,
   // because audit.json's whole purpose is explaining a failed run.
@@ -47,7 +47,7 @@ test('audit.json carries the run\'s audit lines, not just its overrides', () => 
   const warnings = ['Ruleset-bypass anomaly: commit abc has no associated pull request', 'PR #9: post_gate_fallback_attribution (legacyBodyScan).'];
 
   // when
-  const result = render([pr({ number: 9 })], [], { version: '8.9.0', allowUnattributed: false, warnings });
+  const result = render([pr({ number: 9 })], { version: '8.9.0', allowUnattributed: false, warnings });
 
   // then — a log is not an artifact: nothing downstream can read, diff or
   // archive one, so the audit guarantees have to survive in the file too.
@@ -56,7 +56,7 @@ test('audit.json carries the run\'s audit lines, not just its overrides', () => 
 
 test('audit.json carries an empty warning list rather than omitting the field', () => {
   // when — a clean run
-  const result = render([pr({ number: 9 })], [], { version: '8.9.0', allowUnattributed: false });
+  const result = render([pr({ number: 9 })], { version: '8.9.0', allowUnattributed: false });
 
   // then — a consumer never has to distinguish absent from empty
   assert.deepEqual((result.auditJson as { warnings: string[] }).warnings, []);
@@ -67,7 +67,7 @@ test('a failed run records no overrides — nothing was overridden', () => {
   const unattributed = [pr({ number: 2, attributionSource: 'unattributed', issueNumbers: [] })];
 
   // when
-  const result = render([], unattributed, { version: '8.8.30', allowUnattributed: false });
+  const result = render(unattributed, { version: '8.8.30', allowUnattributed: false });
 
   // then — writing rows here made a plain failure indistinguishable from an
   // approved exception, in the one file whose job is telling them apart.
@@ -81,7 +81,7 @@ test('the two failures sharing the gate bucket are named apart, each with its ow
     pr({ number: 2, attributionSource: 'unattributed', issueNumbers: [] }),
     pr({ number: 3, attributionSource: 'resolutionFailed', issueNumbers: [] }),
   ];
-  const reason = render([], bucket, { version: '8.8.30', allowUnattributed: false }).failureReason ?? '';
+  const reason = render(bucket, { version: '8.8.30', allowUnattributed: false }).failureReason ?? '';
 
   assert.match(reason, /No issue reference found: #2/);
   assert.match(reason, /Every referenced issue was unresolvable: #3/);
@@ -92,7 +92,7 @@ test('the two failures sharing the gate bucket are named apart, each with its ow
 
 test('the gate message names only the failure kinds actually present', () => {
   const onlyDead = [pr({ number: 7, attributionSource: 'resolutionFailed', issueNumbers: [] })];
-  const reason = render([], onlyDead, { version: '8.8.30', allowUnattributed: false }).failureReason ?? '';
+  const reason = render(onlyDead, { version: '8.8.30', allowUnattributed: false }).failureReason ?? '';
 
   assert.match(reason, /Every referenced issue was unresolvable: #7/);
   assert.doesNotMatch(reason, /No issue reference found/);
@@ -100,7 +100,7 @@ test('the gate message names only the failure kinds actually present', () => {
 
 test('allow-unattributed with a reason overrides the failure and records the reason in audit.json', () => {
   const unattributed = [pr({ number: 2, attributionSource: 'unattributed', issueNumbers: [] })];
-  const result = render([], unattributed, {
+  const result = render(unattributed, {
     version: '8.8.30',
     allowUnattributed: true,
     unattributedReason: 'known bot noise, tracked in #999',
@@ -114,12 +114,26 @@ test('allow-unattributed with a reason overrides the failure and records the rea
 
 test('allow-unattributed without a reason still fails — the reason is required, not optional', () => {
   const unattributed = [pr({ number: 2, attributionSource: 'unattributed', issueNumbers: [] })];
-  const result = render([], unattributed, { version: '8.8.30', allowUnattributed: true });
+  const result = render(unattributed, { version: '8.8.30', allowUnattributed: true });
   assert.ok(result.failureReason);
 });
 
+test('should exclude merge-type PRs from the unattributed guard', () => {
+  // given
+  const prs = [pr({ section: null, attributionSource: 'unattributed', issueNumbers: [] })];
+
+  // when
+  const result = render(prs, { version: '8.9.19', allowUnattributed: false });
+
+  // then
+  assert.equal(result.failureReason, undefined);
+  assert.equal(result.customerBody, '');
+  assert.equal(result.fullAsset, '');
+  assert.deepEqual((result.auditJson as { overrides: unknown[] }).overrides, []);
+});
+
 test('all four JSON outputs carry the literal schemaVersion', () => {
-  const result = render([pr()], [], { version: '8.8.30', allowUnattributed: false });
+  const result = render([pr()], { version: '8.8.30', allowUnattributed: false });
   for (const doc of [result.changelogJson, result.labelsJson, result.auditJson, result.commentsJson]) {
     assert.equal((doc as { schemaVersion: string }).schemaVersion, SCHEMA_VERSION);
   }
@@ -128,7 +142,7 @@ test('all four JSON outputs carry the literal schemaVersion', () => {
 test('changelog.json records deliveryPath alongside attributionSource for every PR', () => {
   // given — a downstream consumer must be able to tell a backport hop from
   // direct delivery without re-deriving it from the PR body
-  const result = render([pr({ number: 1, deliveryPath: 'backportHop' }), pr({ number: 2, deliveryPath: 'direct' })], [], {
+  const result = render([pr({ number: 1, deliveryPath: 'backportHop' }), pr({ number: 2, deliveryPath: 'direct' })], {
     version: '8.8.30',
     allowUnattributed: false,
   });
@@ -142,7 +156,7 @@ test('changelog.json records deliveryPath alongside attributionSource for every 
 });
 
 test('an issue this PR actually closes gets a "Released" comment', () => {
-  const result = render([pr({ number: 10, issueNumbers: [100], closesIssueNumbers: [100] })], [], {
+  const result = render([pr({ number: 10, issueNumbers: [100], closesIssueNumbers: [100] })], {
     version: '8.8.6',
     allowUnattributed: false,
   });
@@ -153,7 +167,7 @@ test('an issue this PR actually closes gets a "Released" comment', () => {
 });
 
 test('an issue this PR only contributes to (does not close) gets a "Partially delivered" comment, never "Released"', () => {
-  const result = render([pr({ number: 11, issueNumbers: [100], closesIssueNumbers: [] })], [], {
+  const result = render([pr({ number: 11, issueNumbers: [100], closesIssueNumbers: [] })], {
     version: '8.8.5',
     allowUnattributed: false,
   });
@@ -171,7 +185,7 @@ test('several pull requests delivering one issue produce ONE comment naming all 
   const prs = [100, 101, 102, 103].map((number) => pr({ number, issueNumbers: [100], closesIssueNumbers: [] }));
 
   // when
-  const result = render(prs, [], { version: '8.9.0', allowUnattributed: false });
+  const result = render(prs, { version: '8.9.0', allowUnattributed: false });
 
   // then
   const entries = (result.commentsJson as { entries: { issueNumber: number; prNumbers: number[]; text: string }[] }).entries;
@@ -190,7 +204,7 @@ test('an issue is Released when ANY of its delivering pull requests closed it', 
   ];
 
   // when
-  const result = render(prs, [], { version: '8.9.0', allowUnattributed: false });
+  const result = render(prs, { version: '8.9.0', allowUnattributed: false });
 
   // then — one comment, and it reads as released rather than partial
   const entries = (result.commentsJson as { entries: { issueNumber: number; relationKind: string; text: string }[] }).entries;
@@ -200,11 +214,11 @@ test('an issue is Released when ANY of its delivering pull requests closed it', 
 });
 
 test('multi-release delivery idempotency: the earlier release never says Released even after the later one does', () => {
-  const earlier = render([pr({ number: 20, issueNumbers: [100], closesIssueNumbers: [] })], [], {
+  const earlier = render([pr({ number: 20, issueNumbers: [100], closesIssueNumbers: [] })], {
     version: '8.8.5',
     allowUnattributed: false,
   });
-  const later = render([pr({ number: 21, issueNumbers: [100], closesIssueNumbers: [100] })], [], {
+  const later = render([pr({ number: 21, issueNumbers: [100], closesIssueNumbers: [100] })], {
     version: '8.8.6',
     allowUnattributed: false,
   });
@@ -219,7 +233,7 @@ test('multi-release delivery idempotency: the earlier release never says Release
 });
 
 test('an internal-only section is present in the full asset but absent from the customer body', () => {
-  const result = render([pr({ number: 30, section: 'Maintenance', visibility: 'internal', title: 'ci: bump runner' })], [], {
+  const result = render([pr({ number: 30, section: 'Maintenance', visibility: 'internal', title: 'ci: bump runner' })], {
     version: '8.8.30',
     allowUnattributed: false,
   });
@@ -240,7 +254,7 @@ test('emptyCustomerBodyWarning: warns when work was attributed but the body is e
 });
 
 test('an empty customer body warns when pull requests WERE attributed — a maintenance-only release still deserves a look', () => {
-  const result = render([pr({ number: 30, section: 'Maintenance', visibility: 'internal', title: 'ci: bump runner' })], [], {
+  const result = render([pr({ number: 30, section: 'Maintenance', visibility: 'internal', title: 'ci: bump runner' })], {
     version: '8.8.30',
     allowUnattributed: false,
   });
@@ -252,13 +266,13 @@ test('an empty customer body warns when pull requests WERE attributed — a main
 
 test('an empty customer body from a genuinely empty release (nothing attributed) does not warn', () => {
   // given — no attributed PRs at all, so there is nothing to be suspicious of
-  const result = render([], [], { version: '8.8.30', allowUnattributed: false });
+  const result = render([], { version: '8.8.30', allowUnattributed: false });
   assert.equal(result.customerBody, '');
   assert.deepEqual((result.auditJson as { warnings: string[] }).warnings, []);
 });
 
 test('a non-empty customer body never triggers the empty-body warning', () => {
-  const result = render([pr()], [], { version: '8.8.30', allowUnattributed: false });
+  const result = render([pr()], { version: '8.8.30', allowUnattributed: false });
   assert.notEqual(result.customerBody, '');
   assert.deepEqual((result.auditJson as { warnings: string[] }).warnings, []);
 });
@@ -266,7 +280,6 @@ test('a non-empty customer body never triggers the empty-body warning', () => {
 test('a no-issue (opt-out) customer-visible PR renders under "Changes without a tracked issue", not its type section', () => {
   const result = render(
     [pr({ number: 40, title: 'fix: x', section: 'Bug Fixes', attributionSource: 'optOut', issueNumbers: [] })],
-    [],
     { version: '8.8.30', allowUnattributed: false },
   );
   assert.match(result.customerBody, /## Changes without a tracked issue/);
@@ -276,7 +289,6 @@ test('a no-issue (opt-out) customer-visible PR renders under "Changes without a 
 test('a bot-exempt PR (e.g. renovate) renders under its normal type section, NOT "Changes without a tracked issue" — the exemption is structural, not a declaration', () => {
   const result = render(
     [pr({ number: 41, title: 'deps: bump foo', section: 'Dependency updates', attributionSource: 'botExempt', issueNumbers: [] })],
-    [],
     { version: '8.8.30', allowUnattributed: false },
   );
   assert.doesNotMatch(result.customerBody, /Changes without a tracked issue/);
@@ -291,7 +303,7 @@ test('several PRs delivering one issue render as a single line naming every PR �
   );
 
   // when
-  const body = render(delivering, [], { version: '8.8.38', allowUnattributed: false }).customerBody;
+  const body = render(delivering, { version: '8.8.38', allowUnattributed: false }).customerBody;
 
   // then the issue is named once, with every contributing PR as provenance
   const featureLines = body.split('\n').filter((line) => line.startsWith('- '));
@@ -309,7 +321,7 @@ test('an issue whose PRs span sections lands once, in the most customer-visible 
   ];
 
   // when
-  const asset = render(delivering, [], { version: '8.8.38', allowUnattributed: false }).fullAsset;
+  const asset = render(delivering, { version: '8.8.38', allowUnattributed: false }).fullAsset;
 
   // then Features outranks Bug Fixes and Maintenance, and the entry appears there alone
   assert.match(asset, /## Features/);
@@ -327,7 +339,7 @@ test('the customer body names only the PRs it may show; the full asset names eve
   ];
 
   // when
-  const result = render(delivering, [], { version: '8.8.38', allowUnattributed: false });
+  const result = render(delivering, { version: '8.8.38', allowUnattributed: false });
 
   // then
   assert.match(result.customerBody, /- Add agent history API \(#55\) — #102$/m);
@@ -340,7 +352,7 @@ test('grouping never merges PRs that share no issue — two issues stay two line
     pr({ number: 102, title: 'Add audit log export', issueNumbers: [56] }),
   ];
 
-  const body = render(delivering, [], { version: '8.8.38', allowUnattributed: false }).customerBody;
+  const body = render(delivering, { version: '8.8.38', allowUnattributed: false }).customerBody;
 
   assert.equal(body.split('\n').filter((line) => line.startsWith('- ')).length, 2);
   assert.match(body, /Add agent history API \(#55\) — #101/);
@@ -348,11 +360,39 @@ test('grouping never merges PRs that share no issue — two issues stay two line
 });
 
 test('BREAKING CHANGE is cross-listed at the top of the customer body in addition to its normal section', () => {
-  const result = render([pr({ number: 50, breaking: true })], [], { version: '8.8.30', allowUnattributed: false });
+  const result = render([pr({ number: 50, breaking: true })], { version: '8.8.30', allowUnattributed: false });
   assert.match(result.customerBody, /## Breaking changes/);
   assert.match(result.customerBody, /#50/);
   assert.match(result.customerBody, /## Features/);
 });
+
+for (const breakingPr of [1, 2]) {
+  test(`should preserve breaking changes from dependency PR #${breakingPr} when grouping packages`, () => {
+    // given
+    const prs = [2, 1].map((number) =>
+      pr({
+        number,
+        section: 'Dependency updates',
+        attributionSource: 'botExempt',
+        issueNumbers: [],
+        breaking: number === breakingPr,
+        dependencies: [
+          { name: 'pkg', from: `${number}.0`, to: `${number + 1}.0` },
+          { name: 'other', from: `${number}.0`, to: `${number + 1}.0` },
+        ],
+      }),
+    );
+
+    // when
+    const result = render(prs, { version: '8.9.19', allowUnattributed: false });
+
+    // then
+    for (const body of [result.customerBody, result.fullAsset]) {
+      assert.match(body, /^## Breaking changes\n\n- pkg: 1\.0 → 3\.0 \(#2, #1\)\n- other: 1\.0 → 3\.0 \(#2, #1\)/);
+      assert.match(body, /## Dependency updates/);
+    }
+  });
+}
 
 test('an issue still open after this release is marked partially delivered', () => {
   // given — grouping puts one line under the issue's own title, which reads as
@@ -363,7 +403,7 @@ test('an issue still open after this release is marked partially delivered', () 
   ];
 
   // when
-  const result = render(prs, [], { version: '8.9.0', allowUnattributed: false });
+  const result = render(prs, { version: '8.9.0', allowUnattributed: false });
 
   // then
   assert.match(result.customerBody, /- Add agent history API \(#55\) — #101, #102 \(partially delivered\)$/m);
@@ -378,7 +418,7 @@ test('a closed issue carries no partial marker, even when no pull request is rec
   ];
 
   // when
-  const result = render(prs, [], { version: '8.9.0', allowUnattributed: false });
+  const result = render(prs, { version: '8.9.0', allowUnattributed: false });
 
   // then
   assert.match(result.customerBody, /- Add agent history API \(#55\) — #101$/m);
@@ -386,7 +426,7 @@ test('a closed issue carries no partial marker, even when no pull request is rec
 
 test('an entry with no linked issue is never marked partial', () => {
   // given — an opt-out pull request has no issue to be partial about
-  const result = render([pr({ number: 61909, title: 'fix: use exact long position', attributionSource: 'optOut', issueNumbers: [] })], [], {
+  const result = render([pr({ number: 61909, title: 'fix: use exact long position', attributionSource: 'optOut', issueNumbers: [] })], {
     version: '8.9.19',
     allowUnattributed: false,
   });
@@ -409,12 +449,14 @@ test('repeated updates of one dependency collapse to one first-to-last line', ()
   const prs = [bump(61527, '4.8.195', '4.8.196'), bump(61528, '4.8.194', '4.8.195'), bump(61530, '4.8.193', '4.8.194')];
 
   // when
-  const result = render(prs, [], { version: '8.9.19', allowUnattributed: false });
+  const result = render(prs, { version: '8.9.19', allowUnattributed: false });
 
   // then — one line, the range the release actually moved it through, every
   // pull request still cited
   assert.match(result.customerBody, /- io\.github\.classgraph:classgraph: 4\.8\.193 → 4\.8\.196 \(#61527, #61528, #61530\)$/m);
   assert.equal(result.customerBody.split('\n').filter((line) => line.includes('classgraph')).length, 1);
+  assert.doesNotMatch(result.customerBody, /## Breaking changes/);
+  assert.doesNotMatch(result.fullAsset, /## Breaking changes/);
 });
 
 test('one renovate pull request listing a package twice collapses too', () => {
@@ -434,7 +476,7 @@ test('one renovate pull request listing a package twice collapses too', () => {
   ];
 
   // when
-  const result = render(prs, [], { version: '8.9.19', allowUnattributed: false });
+  const result = render(prs, { version: '8.9.19', allowUnattributed: false });
 
   // then
   assert.match(result.customerBody, /- browserslist: 4\.28\.1 → 4\.28\.7 \(#61684\)$/m);
@@ -456,7 +498,7 @@ test('one pull request bumping several packages produces one line each', () => {
   ];
 
   // when
-  const result = render(prs, [], { version: '8.9.19', allowUnattributed: false });
+  const result = render(prs, { version: '8.9.19', allowUnattributed: false });
 
   // then — a reader scanning for one package finds it on its own line
   assert.match(result.customerBody, /- left: 1\.0 → 1\.1 \(#900\)$/m);
@@ -471,7 +513,7 @@ test('a dependency that is downgraded then bumped back up shows the release\'s a
     pr({ number, section: 'Dependency updates', issueNumbers: [], title: 'x', dependencies: [{ name: 'pkg', from, to }] });
 
   // when
-  const result = render([bump(2, '1', '1.5'), bump(1, '2', '1')], [], { version: '8.9.19', allowUnattributed: false });
+  const result = render([bump(2, '1', '1.5'), bump(1, '2', '1')], { version: '8.9.19', allowUnattributed: false });
 
   // then
   assert.match(result.customerBody, /- pkg: 2 → 1\.5 \(#2, #1\)$/m);
@@ -490,7 +532,7 @@ test('an unorderable version pair falls back to walk order rather than inventing
     });
 
   // when
-  const result = render([bump(2, 'bbbbbbb', 'ccccccc'), bump(1, 'aaaaaaa', 'bbbbbbb')], [], {
+  const result = render([bump(2, 'bbbbbbb', 'ccccccc'), bump(1, 'aaaaaaa', 'bbbbbbb')], {
     version: '8.9.19',
     allowUnattributed: false,
   });

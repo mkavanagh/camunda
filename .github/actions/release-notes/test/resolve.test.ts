@@ -191,7 +191,9 @@ test('labels and closingIssuesReferences are flattened to plain arrays', async (
     metadataPage({
       pr0: prNode({
         labels: { nodes: [{ name: 'component/zeebe' }, { name: 'BREAKING CHANGE' }] },
-        closingIssuesReferences: { nodes: [{ number: 100 }, { number: 101 }] },
+        closingIssuesReferences: {
+          nodes: [100, 101].map((number) => ({ number, repository: { nameWithOwner: 'camunda/camunda' } })),
+        },
       }),
     }),
   ]);
@@ -201,12 +203,54 @@ test('labels and closingIssuesReferences are flattened to plain arrays', async (
   assert.equal(pr!.truncatedFields, undefined);
 });
 
+test('should retain only native closing references from the configured repository', async () => {
+  // given
+  const calls: Call[] = [];
+  const fetchImpl = fakeFetch(
+    [
+      metadataPage({
+        pr0: prNode({
+          closingIssuesReferences: {
+            nodes: [
+              { number: 4777, repository: { nameWithOwner: 'camunda/private-tracker' } },
+              { number: 100, repository: { nameWithOwner: 'Other/Public-Repo' } },
+              { number: 101, repository: { nameWithOwner: 'other/public-repo' } },
+              { number: 102, repository: { nameWithOwner: 'another/public-repo' } },
+            ],
+          },
+        }),
+      }),
+    ],
+    calls,
+  );
+
+  // when
+  const [pr] = await new GithubGraphqlResolver('token', 'other', 'public-repo', fetchImpl, noSleep).fetchPrMetadata([1]);
+
+  // then
+  assert.deepEqual(pr!.closingIssuesReferences, [100, 101]);
+  assert.match(calls[0]!.body.query, /closingIssuesReferences[^]*nodes\s*\{\s*number\s+repository\s*\{\s*nameWithOwner/);
+});
+
+test('should reject a native closing reference without repository identity', async () => {
+  // given
+  const fetchImpl = fakeFetch([
+    metadataPage({ pr0: prNode({ closingIssuesReferences: { nodes: [{ number: 4777 }] } }) }),
+  ]);
+
+  // when / then
+  await assert.rejects(() => resolver(fetchImpl).fetchPrMetadata([1]), /repository\.nameWithOwner/);
+});
+
 test('a PR with more than 20 labels or closing refs is flagged truncated, never silently dropped', async () => {
   const fetchImpl = fakeFetch([
     metadataPage({
       pr0: prNode({
         labels: { nodes: [{ name: 'component/zeebe' }], pageInfo: { hasNextPage: true } },
-        closingIssuesReferences: { nodes: [{ number: 100 }], pageInfo: { hasNextPage: true } },
+        closingIssuesReferences: {
+          nodes: [{ number: 100, repository: { nameWithOwner: 'camunda/camunda' } }],
+          pageInfo: { hasNextPage: true },
+        },
       }),
     }),
   ]);

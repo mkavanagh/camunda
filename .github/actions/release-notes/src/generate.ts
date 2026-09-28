@@ -5,7 +5,7 @@ import type { OriginalPull, PipelineResolver } from './pipeline';
 import { resolveBaselineStrategy, resolveCommitsToPrs } from './range';
 import { resolveBaselineRef, walkFirstParent } from './range/walk';
 import type { RenderPrInput } from './render';
-import { render, emptyCustomerBodyWarning } from './render';
+import { render, emptyCustomerBodyWarning, isUnattributed } from './render';
 import { hiddenFromCustomerBody } from './categorize';
 import { closesIssueNumbers } from './delivery';
 import type { DeliveryInput } from './delivery';
@@ -156,7 +156,6 @@ async function run(): Promise<void> {
     /** `closesIssueNumbers` needs the issue-side lookup below, so it's added later. */
     readonly renderPr: Omit<RenderPrInput, 'closesIssueNumbers'>;
     readonly delivery: Omit<DeliveryInput, 'issueNumbers'>;
-    readonly bucketed: boolean;
     readonly warnings: readonly string[];
   }
 
@@ -201,10 +200,6 @@ async function run(): Promise<void> {
         deliveryPath: output.attribution.deliveryPath,
         declaredCloses: pr.closingIssuesReferences,
       },
-      // A merge-type PR (section: null) is excluded from every output, so it must never trip the unattributed guard.
-      bucketed:
-        output.categorization.section !== null &&
-        (output.attribution.source === 'unattributed' || output.attribution.source === 'resolutionFailed'),
       warnings,
     };
   };
@@ -245,8 +240,7 @@ async function run(): Promise<void> {
   const issueFacts = await graphql.fetchIssueFacts([...wantedIssues]);
   core.info(`Read labels and the close event of ${issueFacts.size} of ${wantedIssues.size} referenced issue(s).`);
 
-  const attributed: RenderPrInput[] = [];
-  const unattributed: RenderPrInput[] = [];
+  const renderPrs: RenderPrInput[] = [];
   const issueFactsWarnings: string[] = [];
   for (const entry of processed) {
     if (!entry) continue;
@@ -273,13 +267,13 @@ async function run(): Promise<void> {
       // positively open only — an issue absent from the lookup is not evidence of anything
       openIssueNumbers: entry.renderPr.issueNumbers.filter((issueNumber) => issueFacts.get(issueNumber)?.closed === false),
     };
-    (entry.bucketed ? unattributed : attributed).push(renderPr);
+    renderPrs.push(renderPr);
   }
 
   for (const warning of issueFactsWarnings) core.warning(warning);
   const auditWarnings = [...rangeReasons, ...processed.flatMap((entry) => entry?.warnings ?? []), ...issueFactsWarnings];
 
-  const result = render(attributed, unattributed, {
+  const result = render(renderPrs, {
     version: input.targetVersion,
     allowUnattributed: input.allowUnattributed,
     unattributedReason: input.unattributedReason,
@@ -288,7 +282,8 @@ async function run(): Promise<void> {
 
   // Same condition render() already folded into audit.json — surfaced here
   // too so it isn't only visible to someone who goes looking at that file.
-  const emptyBodyWarning = emptyCustomerBodyWarning(attributed.length > 0, result.customerBody);
+  const attributedCount = renderPrs.filter((pr) => !isUnattributed(pr)).length;
+  const emptyBodyWarning = emptyCustomerBodyWarning(attributedCount > 0, result.customerBody);
   if (emptyBodyWarning) core.warning(emptyBodyWarning);
 
   mkdirSync(input.outputDir, { recursive: true }); // writeFileSync doesn't create the dir; recursive for a nested output-dir too
@@ -310,7 +305,7 @@ async function run(): Promise<void> {
 
   if (result.failureReason) throw new Error(result.failureReason); // fails only AFTER every diagnostic output exists on disk
 
-  core.info(`Generated release notes for ${input.targetVersion}: ${attributed.length} attributed PR(s).`);
+  core.info(`Generated release notes for ${input.targetVersion}: ${attributedCount} attributed PR(s).`);
 }
 
 run().catch((err) => core.setFailed(err instanceof Error ? err.message : String(err)));

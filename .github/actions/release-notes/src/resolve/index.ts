@@ -1,4 +1,5 @@
 import { githubHeaders, retryableStatus, backoffMs, MAX_RETRIES } from '../github';
+import { isOwnRepo } from './warm';
 
 /**
  * The generator's network layer: two batched GraphQL phases — commit to PR
@@ -34,6 +35,7 @@ export interface PrMetadata {
   readonly authorLogin?: string;
   readonly mergedAt: string;
   readonly labels: readonly string[];
+  /** Same-repository issues only; foreign numbers must never enter local lookups. */
   readonly closingIssuesReferences: readonly number[];
   /** Set when `labels`/`closingIssuesReferences` hit the query's first-20
    *  cap and more exist — the caller must warn, never drop silently. */
@@ -135,7 +137,10 @@ interface PrMetadataNode {
   readonly mergedAt?: string;
   readonly author?: { login?: string; __typename?: string } | null;
   readonly labels?: { nodes?: readonly { name: string }[]; pageInfo?: { hasNextPage?: boolean } };
-  readonly closingIssuesReferences?: { nodes?: readonly { number: number }[]; pageInfo?: { hasNextPage?: boolean } };
+  readonly closingIssuesReferences?: {
+    nodes?: readonly { number: number; repository: { nameWithOwner: string } }[];
+    pageInfo?: { hasNextPage?: boolean };
+  };
 }
 
 interface IssueFactsNode {
@@ -361,7 +366,7 @@ export class GithubGraphqlResolver implements GraphqlResolver {
       varType: 'Int!',
       aliasPrefix: 'pr',
       field: (ref) =>
-        `pullRequest(number: ${ref}) { number title body mergedAt baseRefName headRefName mergeCommit { oid } author { login __typename } labels(first: 20) { nodes { name } pageInfo { hasNextPage } } closingIssuesReferences(first: 20) { nodes { number } pageInfo { hasNextPage } } }`,
+        `pullRequest(number: ${ref}) { number title body mergedAt baseRefName headRefName mergeCommit { oid } author { login __typename } labels(first: 20) { nodes { name } pageInfo { hasNextPage } } closingIssuesReferences(first: 20) { nodes { number repository { nameWithOwner } } pageInfo { hasNextPage } } }`,
     });
     const repository = await this.requestRepository(query, variables, speculative);
     return numbers.flatMap((number, i) => {
@@ -384,9 +389,14 @@ export class GithubGraphqlResolver implements GraphqlResolver {
         authorLogin: normalizeAuthorLogin(pr.author),
         mergedAt: assertField(pr.mergedAt, `mergedAt on PR #${number}`),
         labels: assertField(pr.labels?.nodes, `labels.nodes on PR #${number}`).map((label) => label.name),
-        closingIssuesReferences: assertField(pr.closingIssuesReferences?.nodes, `closingIssuesReferences.nodes on PR #${number}`).map(
-          (issue) => issue.number,
-        ),
+        closingIssuesReferences: assertField(pr.closingIssuesReferences?.nodes, `closingIssuesReferences.nodes on PR #${number}`)
+          .filter((issue) =>
+            isOwnRepo(
+              assertField(issue.repository?.nameWithOwner, `repository.nameWithOwner on closing issue #${issue.number} of PR #${number}`),
+              `${this.owner}/${this.repo}`,
+            ),
+          )
+          .map((issue) => issue.number),
         ...(truncatedFields.length > 0 ? { truncatedFields } : {}),
       }];
     });
