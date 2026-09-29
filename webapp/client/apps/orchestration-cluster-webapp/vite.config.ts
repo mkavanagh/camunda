@@ -17,6 +17,18 @@ import sbom from 'rollup-plugin-sbom';
 import {playwright} from '@vitest/browser-playwright';
 import path from 'node:path';
 import tailwindcss from '@tailwindcss/vite';
+import type {IncomingMessage} from 'node:http';
+
+/**
+ * Serves the SPA shell locally instead of proxying to the backend, but only for a real browser
+ * navigation (e.g. the user opening /login directly). The app itself also issues a GET to these
+ * paths (e.g. to fetch a CSRF token before submitting the login form), and those requests must
+ * reach the backend rather than get swallowed by this bypass, so they're told apart by
+ * `Sec-Fetch-Mode`, which browsers set to `navigate` only for top-level navigations.
+ */
+function bypassBrowserNavigation(req: IncomingMessage) {
+	return req.method !== 'POST' && req.headers['sec-fetch-mode'] === 'navigate' ? '/' : undefined;
+}
 
 const injectCustomCss: PluginOption = {
 	name: 'inject-custom-css',
@@ -64,15 +76,15 @@ const config = defineConfig(({mode}) => ({
 			'/v2': 'http://localhost:8080',
 			'/login': {
 				target: 'http://localhost:8080',
-				bypass: (req) => (req.headers['sec-fetch-mode'] === 'navigate' ? '/' : undefined),
+				bypass: bypassBrowserNavigation,
 			},
 			'/logout': {
 				target: 'http://localhost:8080',
-				bypass: (req) => (req.method !== 'POST' ? '/' : undefined),
+				bypass: bypassBrowserNavigation,
 			},
 			'/session/heartbeat': {
 				target: 'http://localhost:8080',
-				bypass: (req) => (req.method !== 'POST' ? '/' : undefined),
+				bypass: bypassBrowserNavigation,
 			},
 		},
 	},
