@@ -10,8 +10,12 @@ import { getBaseUrl, getLoginApiUrl, getLogoutApiUrl } from "src/configuration";
 
 let loggedIn = false;
 
+const THIRD_PARTY_SESSION_RELOAD_KEY =
+  "identity.thirdPartySessionReloadAttempted";
+
 export function activateSession() {
   loggedIn = true;
+  sessionStorage.removeItem(THIRD_PARTY_SESSION_RELOAD_KEY);
 }
 
 export function disableSession() {
@@ -22,7 +26,63 @@ export function isLoggedIn() {
   return loggedIn;
 }
 
+<<<<<<< HEAD
 export function login(
+=======
+/**
+ * In OIDC mode there is no in-app login form to fall back to on session expiry — unlike
+ * disableSession() + a navigate to /login, this reloads the page so the browser re-enters the
+ * server's OIDC auth filter chain. If the IdP session is still valid this resolves silently;
+ * otherwise the browser ends up on the IdP's own login page. Guarded by a one-shot flag (cleared
+ * on the next successful activateSession()) so a reload that doesn't fix anything doesn't loop.
+ */
+export function recoverThirdPartySession() {
+  disableSession();
+  if (sessionStorage.getItem(THIRD_PARTY_SESSION_RELOAD_KEY) === "true") {
+    return;
+  }
+  sessionStorage.setItem(THIRD_PARTY_SESSION_RELOAD_KEY, "true");
+  window.location.reload();
+}
+
+const logoutResponseSchema = z.object({
+  url: z.url({ message: "No redirect URL provided" }),
+});
+
+async function parseRedirectUrl(response: Response): Promise<string> {
+  const json = await response.json();
+  const result = logoutResponseSchema.parse(json);
+  return result.url;
+}
+
+/**
+ * Gets a CSRF token from the login page and keeps it for the requests that follow. The login
+ * endpoint rejects a POST without a token, and a GET of the login page is where the server sends
+ * one.
+ */
+async function requestLoginCsrfToken(): Promise<string | null> {
+  try {
+    const response = await fetch(getLoginApiUrl(), {
+      method: "get",
+      headers: { Accept: "text/html" },
+    });
+    const csrfToken = response.headers.get("X-CSRF-TOKEN");
+
+    if (csrfToken !== null) {
+      sessionStorage.setItem("X-CSRF-TOKEN", csrfToken);
+    }
+
+    return csrfToken;
+  } catch (e) {
+    // The login request that follows reports the failure to the user as a rejected login. Log the
+    // cause so a missing CSRF token is distinguishable from bad credentials.
+    console.error("fetching a CSRF token failed", e);
+    return null;
+  }
+}
+
+export async function login(
+>>>>>>> 361fb329 (fix: stop showing Identity's login form on OIDC session expiry)
   username: string,
   password: string,
 ): Promise<{ success: boolean; message: string }> {
