@@ -8,7 +8,9 @@
 
 import {Text, Tooltip, TooltipContent, TooltipTrigger, type TypographyVariant} from '@camunda/design-system';
 import {Timer} from '@camunda/design-system/icons';
+import {observer} from 'mobx-react-lite';
 import {cn} from '#/shared/cn';
+import {themeStore} from '#/shared/theme/theme';
 
 type Size = 'small' | 'medium' | 'large';
 
@@ -43,132 +45,129 @@ const barHeightClassNames: Record<Size, string> = {
 	large: 'h-2',
 };
 
-const InstancesBar: React.FC<Props> = ({
-	label,
-	activeInstancesCount,
-	incidentsCount,
-	isDraining = false,
-	drainingDescription,
-	size,
-	className,
-}) => {
-	const total = (activeInstancesCount ?? 0) + incidentsCount;
-	const incidentsBarRatio = total === 0 ? 0 : (100 * incidentsCount) / total;
-	const hasIncidents = incidentsCount > 0;
-	const hasActiveInstances = (activeInstancesCount ?? 0) > 0;
-	const showIncidentsBar = activeInstancesCount !== undefined;
-	const showActiveInstancesCount = activeInstancesCount !== undefined && activeInstancesCount >= 0;
-	const showDrainingIndicator = isDraining && drainingDescription !== undefined;
-	const isLabelRed = label !== undefined && label.type === 'incident' && size === 'medium';
-	const labelTextColorClassName = isLabelRed
-		? 'text-danger-foreground-strong'
-		: label?.size === 'medium'
-			? 'text-foreground'
-			: 'text-neutral-foreground-subtle';
+const InstancesBar: React.FC<Props> = observer(
+	({label, activeInstancesCount, incidentsCount, isDraining = false, drainingDescription, size, className}) => {
+		const isDark = themeStore.actualTheme === 'dark';
+		const dangerBadgeClassName = isDark ? 'text-danger-foreground-subtle' : 'text-danger-foreground-strong';
+		const successBadgeClassName = isDark ? 'text-success-foreground-subtle' : 'text-success-foreground-strong';
+		const total = (activeInstancesCount ?? 0) + incidentsCount;
+		const incidentsBarRatio = total === 0 ? 0 : (100 * incidentsCount) / total;
+		const hasIncidents = incidentsCount > 0;
+		const hasActiveInstances = (activeInstancesCount ?? 0) > 0;
+		const showIncidentsBar = activeInstancesCount !== undefined;
+		const showActiveInstancesCount = activeInstancesCount !== undefined && activeInstancesCount >= 0;
+		const showDrainingIndicator = isDraining && drainingDescription !== undefined;
+		const isLabelRed = label !== undefined && label.type === 'incident' && size === 'medium';
+		const labelTextColorClassName = isLabelRed
+			? 'text-danger-foreground-strong'
+			: label?.size === 'medium'
+				? 'text-foreground'
+				: 'text-neutral-foreground-subtle';
 
-	return (
-		<div className={className}>
-			<Text as="div" variant={wrapperVariant[size]} className="flex">
-				<div
-					data-testid="incident-instances-badge"
-					className={cn(
-						'min-w-12 tabular-nums',
-						hasIncidents ? 'text-danger-foreground-strong' : 'text-neutral-foreground-subtle',
-					)}
-				>
-					{incidentsCount}
-				</div>
-				{label && (
-					<div className="flex min-w-0 flex-1 items-center gap-2">
-						<Tooltip>
-							<TooltipTrigger asChild>
-								<Text
-									as="div"
-									variant={labelVariant[label.size]}
-									className={cn('min-w-0 overflow-hidden text-ellipsis whitespace-nowrap', labelTextColorClassName)}
-								>
-									{label.text}
-								</Text>
-							</TooltipTrigger>
-							<TooltipContent>{label.text}</TooltipContent>
-						</Tooltip>
-						{showDrainingIndicator && (
-							<Tooltip>
-								<TooltipTrigger asChild>
-									<div
-										data-testid="draining-indicator"
-										tabIndex={0}
-										className="flex shrink-0 items-center text-danger-foreground-strong"
-									>
-										<Timer className="h-4 w-4" aria-hidden="true" />
-									</div>
-								</TooltipTrigger>
-								<TooltipContent>{drainingDescription}</TooltipContent>
-							</Tooltip>
-						)}
-					</div>
-				)}
-				{!label && (showDrainingIndicator || showActiveInstancesCount) && (
-					<div className="ml-auto flex items-center gap-2 pl-4">
-						{showDrainingIndicator && (
-							<Tooltip>
-								<TooltipTrigger asChild>
-									<div
-										data-testid="draining-indicator"
-										tabIndex={0}
-										className="flex items-center text-danger-foreground-strong"
-									>
-										<Timer className="h-4 w-4" aria-hidden="true" />
-									</div>
-								</TooltipTrigger>
-								<TooltipContent>{drainingDescription}</TooltipContent>
-							</Tooltip>
-						)}
-						{showActiveInstancesCount && (
-							<div
-								data-testid="active-instances-badge"
-								className={cn(
-									'ml-auto min-w-[6ch] text-right tabular-nums',
-									hasActiveInstances ? 'text-success-foreground-strong' : 'text-foreground',
-								)}
-							>
-								{activeInstancesCount}
-							</div>
-						)}
-					</div>
-				)}
-				{label && showActiveInstancesCount && (
+		return (
+			<div className={className}>
+				<Text as="div" variant={wrapperVariant[size]} className="flex">
 					<div
-						data-testid="active-instances-badge"
+						data-testid="incident-instances-badge"
 						className={cn(
-							'ml-auto min-w-[6ch] pl-4 text-right tabular-nums',
-							hasActiveInstances ? 'text-success-foreground-strong' : 'text-foreground',
+							'min-w-12 tabular-nums',
+							hasIncidents ? dangerBadgeClassName : 'text-neutral-foreground-subtle',
 						)}
 					>
-						{activeInstancesCount}
+						{incidentsCount}
+					</div>
+					{label && (
+						<div className="flex min-w-0 flex-1 items-center gap-2">
+							<Tooltip>
+								<TooltipTrigger asChild>
+									<Text
+										as="div"
+										variant={labelVariant[label.size]}
+										className={cn('min-w-0 overflow-hidden text-ellipsis whitespace-nowrap', labelTextColorClassName)}
+									>
+										{label.text}
+									</Text>
+								</TooltipTrigger>
+								<TooltipContent>{label.text}</TooltipContent>
+							</Tooltip>
+							{showDrainingIndicator && (
+								<Tooltip>
+									<TooltipTrigger asChild>
+										<div
+											data-testid="draining-indicator"
+											tabIndex={0}
+											className="flex shrink-0 items-center text-danger-foreground-strong"
+										>
+											<Timer className="h-4 w-4" aria-hidden="true" />
+										</div>
+									</TooltipTrigger>
+									<TooltipContent>{drainingDescription}</TooltipContent>
+								</Tooltip>
+							)}
+						</div>
+					)}
+					{!label && (showDrainingIndicator || showActiveInstancesCount) && (
+						<div className="ml-auto flex items-center gap-2 pl-4">
+							{showDrainingIndicator && (
+								<Tooltip>
+									<TooltipTrigger asChild>
+										<div
+											data-testid="draining-indicator"
+											tabIndex={0}
+											className="flex items-center text-danger-foreground-strong"
+										>
+											<Timer className="h-4 w-4" aria-hidden="true" />
+										</div>
+									</TooltipTrigger>
+									<TooltipContent>{drainingDescription}</TooltipContent>
+								</Tooltip>
+							)}
+							{showActiveInstancesCount && (
+								<div
+									data-testid="active-instances-badge"
+									className={cn(
+										'ml-auto min-w-[6ch] text-right tabular-nums',
+										hasActiveInstances ? successBadgeClassName : 'text-foreground',
+									)}
+								>
+									{activeInstancesCount}
+								</div>
+							)}
+						</div>
+					)}
+					{label && showActiveInstancesCount && (
+						<div
+							data-testid="active-instances-badge"
+							className={cn(
+								'ml-auto min-w-[6ch] pl-4 text-right tabular-nums',
+								hasActiveInstances ? successBadgeClassName : 'text-foreground',
+							)}
+						>
+							{activeInstancesCount}
+						</div>
+					)}
+				</Text>
+				{showIncidentsBar && (
+					<div data-testid="instances-bar" className="relative my-2 overflow-hidden rounded-full">
+						<div
+							className={cn(
+								barHeightClassNames[size],
+								'rounded-full transition-all',
+								hasActiveInstances ? 'bg-[var(--success-foreground-subtle)]' : 'bg-neutral-background-subtle',
+							)}
+						/>
+						<div
+							className={cn(
+								barHeightClassNames[size],
+								'absolute top-0 rounded-full bg-[var(--danger-foreground-subtle)] transition-all',
+							)}
+							style={{width: `${incidentsBarRatio}%`}}
+						/>
 					</div>
 				)}
-			</Text>
-			{showIncidentsBar && (
-				<div data-testid="instances-bar" className="relative my-2 overflow-hidden rounded-full">
-					<div
-						className={cn(
-							barHeightClassNames[size],
-							'rounded-full transition-all',
-							hasActiveInstances ? 'bg-[var(--success-foreground-subtle)]' : 'bg-neutral-background-subtle',
-						)}
-					/>
-					<div
-						className={cn(
-							barHeightClassNames[size],
-							'absolute top-0 rounded-full bg-[var(--danger-foreground-subtle)] transition-all',
-						)}
-						style={{width: `${incidentsBarRatio}%`}}
-					/>
-				</div>
-			)}
-		</div>
-	);
-};
+			</div>
+		);
+	},
+);
 
 export {InstancesBar};
