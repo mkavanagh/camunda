@@ -41,7 +41,11 @@ const REQUEST_SCHEMA = z.object({
 			order: z.literal('desc'),
 		}),
 	),
-	page: z.object({from: z.number(), limit: z.literal(50)}),
+	page: z.object({
+		limit: z.literal(50),
+		after: z.string().optional(),
+		before: z.string().optional(),
+	}),
 });
 const FAILURE_RESPONSE = new HttpResponse(null, {status: 400});
 const ERROR_RESPONSE = new HttpResponse(null, {status: 500});
@@ -71,7 +75,7 @@ const PAGE_1_RESPONSE = HttpResponse.json(
 				activeInstancesWithIncidentCount: 1,
 			}),
 		],
-		page: {totalItems: 60, startCursor: null, endCursor: null, hasMoreTotalItems: true},
+		page: {totalItems: 60, startCursor: null, endCursor: 'page-1-end', hasMoreTotalItems: true},
 	}),
 );
 
@@ -84,7 +88,7 @@ const PAGE_2_RESPONSE = HttpResponse.json(
 				activeInstancesWithoutIncidentCount: 1,
 			}),
 		],
-		page: {totalItems: 60, startCursor: null, endCursor: null, hasMoreTotalItems: false},
+		page: {totalItems: 60, startCursor: 'page-1-end', endCursor: null, hasMoreTotalItems: false},
 	}),
 );
 

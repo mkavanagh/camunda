@@ -88,14 +88,15 @@ const instancesByProcessInfiniteQuery = () =>
 			return response.json();
 		},
 		initialPageParam: 0,
-		getNextPageParam: (lastPage, _, lastPageParam) => {
-			const next = lastPageParam + PAGE_SIZE;
-			return next >= lastPage.page.totalItems ? undefined : next;
+		getNextPageParam: (lastPage, _allPages, lastPageParam) => {
+			const nextOffset = lastPageParam + lastPage.items.length;
+			if (nextOffset <= lastPageParam) {
+				return undefined;
+			}
+			return nextOffset < lastPage.page.totalItems ? nextOffset : undefined;
 		},
-		getPreviousPageParam: (_, __, firstPageParam) => {
-			const prev = firstPageParam - PAGE_SIZE;
-			return prev < 0 ? undefined : prev;
-		},
+		getPreviousPageParam: (_firstPage, _allPages, firstPageParam) =>
+			firstPageParam > 0 ? Math.max(0, firstPageParam - PAGE_SIZE) : undefined,
 		maxPages: MAX_PAGES,
 	});
 
