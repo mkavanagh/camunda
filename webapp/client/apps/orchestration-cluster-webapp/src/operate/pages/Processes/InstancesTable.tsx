@@ -79,6 +79,20 @@ function getActiveOperationsByInstance(items: BatchOperationItem[]) {
 	}, new Map<string, BatchOperationType[]>());
 }
 
+function selectOperationItems({items}: {items: BatchOperationItem[]}) {
+	return {
+		states: getOperationStatesByInstance(items),
+		failures: items
+			.filter((item) => item.state === 'FAILED')
+			.reduce((messages, item) => {
+				const errors = messages.get(item.processInstanceKey) ?? [];
+				errors.push(item.errorMessage);
+				messages.set(item.processInstanceKey, errors);
+				return messages;
+			}, new Map<string, (string | null)[]>()),
+	};
+}
+
 const InstancesTable: React.FC<Props> = ({search, isActionMode, renderActions}) => {
 	const {t} = useTranslation();
 	const {
@@ -127,17 +141,7 @@ const InstancesTable: React.FC<Props> = ({search, isActionMode, renderActions}) 
 	} = useQuery({
 		...batchOperationItemsForInstancesQueryOptions(operationItemsRequestBody),
 		enabled: isOperationStateColumnVisible && processInstanceKeys.length > 0,
-		select: ({items}) => ({
-			states: getOperationStatesByInstance(items),
-			failures: items
-				.filter((item) => item.state === 'FAILED')
-				.reduce((messages, item) => {
-					const errors = messages.get(item.processInstanceKey) ?? [];
-					errors.push(item.errorMessage);
-					messages.set(item.processInstanceKey, errors);
-					return messages;
-				}, new Map<string, (string | null)[]>()),
-		}),
+		select: selectOperationItems,
 		refetchInterval: (query) =>
 			query.state.data?.items.some(({state}) => state === 'ACTIVE') ? ACTIVE_ITEMS_REFETCH_INTERVAL_MS : false,
 	});

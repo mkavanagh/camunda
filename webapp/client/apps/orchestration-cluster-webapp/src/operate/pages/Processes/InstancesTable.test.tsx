@@ -479,6 +479,107 @@ describe('<InstancesTable />', () => {
 		await expect.element(screen.getByText('New failure')).toBeVisible();
 	});
 
+	it('should not reaggregate unchanged operation items when selection rerenders the table', async ({worker}) => {
+		worker.use(
+			mockQueryProcessInstancesEndpoint({
+				successResponse: HttpResponse.json(
+					createQueryProcessInstancesResponse({items: [createProcessInstance({processInstanceKey: '1'})]}),
+				),
+			}),
+			mockQueryBatchOperationItemsEndpoint({
+				successResponse: HttpResponse.json(
+					createQueryBatchOperationItemsResponse({
+						items: [createBatchOperationItem({processInstanceKey: '1', state: 'FAILED', errorMessage: 'Failed'})],
+					}),
+				),
+			}),
+		);
+		const screen = await renderInstancesTable({...BASE_SEARCH, batchOperationKey: 'batch-op-1'});
+		await expect.element(screen.getByText('FAILED')).toBeVisible();
+
+		const originalSet = Map.prototype.set;
+		let aggregations = 0;
+		const setSpy = vi.spyOn(Map.prototype, 'set').mockImplementation(function (
+			this: Map<unknown, unknown>,
+			key: unknown,
+			value: unknown,
+		) {
+			if (key === '1' && value instanceof Set && value.has('FAILED')) {
+				aggregations++;
+			}
+			return originalSet.call(this, key, value);
+		});
+		try {
+			await userEvent.click(screen.getByRole('cell', {name: 'Select instance 1'}));
+			await expect.element(screen.getByRole('checkbox', {name: 'Select instance 1'})).toBeChecked();
+			expect(aggregations).toBe(0);
+		} finally {
+			setSpy.mockRestore();
+		}
+	});
+
+	it('should abort the old batch item request when the batch filter changes', async ({worker}) => {
+		const originalFetch = globalThis.fetch;
+		const itemRequests: {request: Request; body: Promise<unknown>}[] = [];
+		const fetchSpy = vi.spyOn(globalThis, 'fetch').mockImplementation((input, init) => {
+			if (input instanceof Request && input.url.endsWith('/batch-operation-items/search')) {
+				itemRequests.push({request: input, body: input.clone().json()});
+			}
+			return originalFetch(input, init);
+		});
+		try {
+			worker.use(
+				mockQueryProcessInstancesEndpoint({
+					successResponse: HttpResponse.json(
+						createQueryProcessInstancesResponse({items: [createProcessInstance({processInstanceKey: '1'})]}),
+					),
+				}),
+				mockQueryBatchOperationItemsEndpoint({
+					successResponse: EMPTY_BATCH_OPERATION_ITEMS_RESPONSE,
+					delay: 'infinite',
+				}),
+			);
+			const screen = await renderSearchHarness(
+				{...BASE_SEARCH, batchOperationKey: 'batch-op-1'},
+				{...BASE_SEARCH, batchOperationKey: 'batch-op-2'},
+			);
+			let oldRequest: Request | undefined;
+			await expect
+				.poll(async () => {
+					for (const {request, body} of itemRequests) {
+						const payload = z
+							.object({filter: z.object({batchOperationKey: z.object({$eq: z.literal('batch-op-1')})})})
+							.safeParse(await body);
+						if (payload.success) {
+							oldRequest = request;
+							return true;
+						}
+					}
+					return false;
+				})
+				.toBe(true);
+
+			worker.use(
+				mockQueryBatchOperationItemsEndpoint({
+					successResponse: HttpResponse.json(
+						createQueryBatchOperationItemsResponse({
+							items: [
+								createBatchOperationItem({processInstanceKey: '1', state: 'FAILED', errorMessage: 'New failure'}),
+							],
+						}),
+					),
+				}),
+			);
+			await userEvent.click(screen.getByRole('button', {name: 'change search'}));
+
+			await expect.poll(() => oldRequest?.signal.aborted).toBe(true);
+			await userEvent.click(screen.getByRole('button', {name: 'Show failure details for instance 1'}));
+			await expect.element(screen.getByText('New failure')).toBeVisible();
+		} finally {
+			fetchSpy.mockRestore();
+		}
+	});
+
 	it('should report all operation item states for the same process instance', async ({worker}) => {
 		worker.use(
 			mockQueryProcessInstancesEndpoint({

@@ -20,18 +20,22 @@ const PAGE_LIMIT = 10_000;
 
 async function fetchBatchOperationItems(
 	body: QueryBatchOperationItemsRequestBody,
+	signal: AbortSignal,
 ): Promise<QueryBatchOperationItemsResponseBody> {
-	const {response, error} = await request(endpoints.queryBatchOperationItems(body));
+	const {response, error} = await request(new Request(endpoints.queryBatchOperationItems(body), {signal}));
 	if (error !== null) {
 		throw mapQueryError(error);
 	}
-	return response.json();
+	signal.throwIfAborted();
+	const data: QueryBatchOperationItemsResponseBody = await response.json();
+	signal.throwIfAborted();
+	return data;
 }
 
 function batchOperationItemsQueryOptions(body: QueryBatchOperationItemsRequestBody) {
 	return queryOptions({
 		queryKey: ['batchOperationItems', body] as const,
-		queryFn: () => fetchBatchOperationItems(body),
+		queryFn: ({signal}) => fetchBatchOperationItems(body, signal),
 	});
 }
 
@@ -43,11 +47,14 @@ function batchOperationItemsForInstancesQueryOptions(body: QueryBatchOperationIt
 			let after: string | undefined;
 			for (;;) {
 				signal.throwIfAborted();
-				const page = await fetchBatchOperationItems({
-					...body,
-					sort: [{field: 'itemKey', order: 'asc'}],
-					page: {after, limit: PAGE_LIMIT},
-				});
+				const page = await fetchBatchOperationItems(
+					{
+						...body,
+						sort: [{field: 'itemKey', order: 'asc'}],
+						page: {after, limit: PAGE_LIMIT},
+					},
+					signal,
+				);
 				items.push(...page.items);
 				const next = page.page.endCursor;
 				if (next === null) {
