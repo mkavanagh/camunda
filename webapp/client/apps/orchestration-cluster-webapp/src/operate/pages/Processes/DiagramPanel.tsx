@@ -18,6 +18,8 @@ import {useDiagramXml} from './useDiagramXml';
 import {useDiagramStatisticsOverlays} from './useDiagramStatisticsOverlays';
 import {getStatisticsFilter} from './getStatisticsFilter';
 import {getProcessDefinitionName} from './getProcessDefinitionName';
+import {toVariableEntry, type VariableCondition} from './VariablesFilter/variableConditions';
+import {mapProcessInstancesFilter, type ProcessesSearch} from './processesFilter';
 import {Section} from './styled';
 
 type ProcessDefinitionSelection =
@@ -64,6 +66,21 @@ type Props = {
 	completed: boolean;
 	canceled: boolean;
 	suspended: boolean;
+	variable?: VariableCondition[];
+	otherFilters?: Pick<
+		ProcessesSearch,
+		| 'tenantId'
+		| 'processInstanceKey'
+		| 'parentProcessInstanceKey'
+		| 'batchOperationKey'
+		| 'errorMessage'
+		| 'incidentErrorHashCode'
+		| 'hasRetriesLeft'
+		| 'startDateFrom'
+		| 'startDateTo'
+		| 'endDateFrom'
+		| 'endDateTo'
+	>;
 };
 
 const DiagramPanel: React.FC<Props> = ({
@@ -75,6 +92,8 @@ const DiagramPanel: React.FC<Props> = ({
 	completed,
 	canceled,
 	suspended,
+	variable,
+	otherFilters,
 }) => {
 	const {t} = useTranslation();
 	const selectedDefinitionKey =
@@ -88,7 +107,23 @@ const DiagramPanel: React.FC<Props> = ({
 
 	const {data: diagramData, isFetching: isXmlFetching, isError: isXmlError} = useDiagramXml(selectedDefinitionKey);
 
-	const statisticsFilter = getStatisticsFilter({active, incidents, completed, canceled, suspended});
+	const baseStatisticsFilter = getStatisticsFilter({active, incidents, completed, canceled, suspended});
+	const other = mapProcessInstancesFilter({active, incidents, completed, canceled, suspended, ...otherFilters});
+	const statisticsFilter = baseStatisticsFilter
+		? {
+				...baseStatisticsFilter,
+				variables: variable?.map(toVariableEntry),
+				tenantId: other?.tenantId,
+				processInstanceKey: other?.processInstanceKey,
+				parentProcessInstanceKey: other?.parentProcessInstanceKey,
+				batchOperationKey: other?.batchOperationKey,
+				errorMessage: other?.errorMessage,
+				incidentErrorHashCode: other?.incidentErrorHashCode,
+				hasRetriesLeft: other?.hasRetriesLeft,
+				startDate: other?.startDate,
+				endDate: other?.endDate,
+			}
+		: undefined;
 	const {data: overlaysData} = useDiagramStatisticsOverlays({
 		processDefinitionKey: selectedDefinitionKey,
 		filter: statisticsFilter ?? {},

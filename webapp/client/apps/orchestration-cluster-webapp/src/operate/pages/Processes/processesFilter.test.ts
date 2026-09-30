@@ -70,6 +70,28 @@ describe('mapProcessInstancesFilter', () => {
 			startDate: undefined,
 			endDate: undefined,
 			businessId: undefined,
+			variables: undefined,
+		});
+	});
+
+	it('should combine variables with tenant, business ID and state without changing selection scope', () => {
+		const search = processesSearchSchema.parse({
+			process: 'orders',
+			tenantId: 'tenant-A',
+			businessId: 'eq_order-123',
+			variable: [
+				{name: 'status', operator: 'equals', value: '"open"'},
+				{name: 'region', operator: 'exists', value: ''},
+			],
+		});
+		expect(mapProcessInstancesFilter(search)).toMatchObject({
+			processDefinitionId: {$eq: 'orders'},
+			tenantId: {$eq: 'tenant-A'},
+			businessId: {$eq: 'order-123'},
+			variables: [
+				{name: 'status', value: {$eq: '"open"'}},
+				{name: 'region', value: {$exists: true}},
+			],
 		});
 	});
 
@@ -268,6 +290,30 @@ describe('mapProcessInstancesSort', () => {
 				errorMessage: 'Connection timeout',
 				incidentErrorHashCode: -481,
 			});
+		});
+
+		it('should round-trip variable conditions through a deep link, back, forward, removal and reset', async () => {
+			const variable = [{name: 'status', operator: 'equals' as const, value: '"open"'}];
+			const router = await createProcessesSearchRouter('/operate/processes?tenantId=tenant-A&businessId=eq_order-123');
+			await router.navigate({to: '/operate/processes', search: (search) => ({...search, variable})});
+			const link = router.state.location.href;
+			expect(link).toContain('variable=');
+			expect(router.state.matches.at(-1)?.search).toMatchObject({variable});
+
+			const reloaded = await createProcessesSearchRouter(link);
+			expect(reloaded.state.matches.at(-1)?.search).toMatchObject({tenantId: 'tenant-A', variable});
+			await router.navigate({to: '/operate/processes', search: (search) => ({...search, variable: undefined})});
+			expect(router.state.matches.at(-1)?.search).not.toHaveProperty('variable');
+			expect(router.state.location.href).not.toContain('variable=');
+
+			router.history.back();
+			await router.load();
+			expect(router.state.matches.at(-1)?.search).toMatchObject({variable});
+			router.history.forward();
+			await router.load();
+			expect(router.state.matches.at(-1)?.search).not.toHaveProperty('variable');
+			await router.navigate({to: '/operate/processes', search: {}});
+			expect(router.state.location.href).not.toContain('variable=');
 		});
 
 		it('should reset legacy bookmarks without restoring process, version, or tenant', async () => {

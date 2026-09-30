@@ -12,6 +12,7 @@ import {z} from 'zod';
 import {parseIds} from '#/operate/shared/utils/parseIds';
 import {decodeAdvancedStringFilter} from '#/operate/shared/utils/advancedStringFilter';
 import {isSpecificTenant} from '#/operate/shared/utils/isSpecificTenant';
+import {toVariableEntry, variableConditionsSchema, type VariableCondition} from './VariablesFilter/variableConditions';
 
 type ProcessInstancesFilter = NonNullable<QueryProcessInstancesRequestBody['filter']>;
 type ProcessInstancesSort = NonNullable<QueryProcessInstancesRequestBody['sort']>;
@@ -25,6 +26,7 @@ type ProcessesSearch = {
 	processInstanceKey?: string;
 	parentProcessInstanceKey?: string;
 	businessId?: string;
+	variable?: VariableCondition[];
 	batchOperationKey?: string;
 	errorMessage?: string;
 	incidentErrorHashCode?: number;
@@ -55,6 +57,7 @@ const processesSearchSchema = z
 		processInstanceKey: z.coerce.string().optional(),
 		parentProcessInstanceKey: z.coerce.string().optional(),
 		businessId: z.coerce.string().optional(),
+		variable: variableConditionsSchema,
 		batchOperationKey: z.coerce.string().optional(),
 		errorMessage: z.coerce.string().optional(),
 		incidentErrorHashCode: z
@@ -243,6 +246,7 @@ function mapProcessInstancesFilter(search: ProcessesSearch): ProcessInstancesFil
 				? {$gt: toISO(search.endDateFrom), $lt: toISO(search.endDateTo)}
 				: undefined,
 		businessId: search.businessId ? decodeAdvancedStringFilter(search.businessId) : undefined,
+		variables: search.variable?.map(toVariableEntry),
 	};
 }
 

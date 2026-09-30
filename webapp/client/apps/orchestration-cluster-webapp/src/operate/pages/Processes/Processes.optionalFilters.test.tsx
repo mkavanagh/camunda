@@ -42,6 +42,7 @@ function renderProcessesPage(searchParams?: Record<string, string>) {
 }
 
 const OPTIONAL_FILTER_LABELS = [
+	'Variables',
 	'Process Instance Key(s)',
 	'Business ID',
 	'Batch Operation Key',

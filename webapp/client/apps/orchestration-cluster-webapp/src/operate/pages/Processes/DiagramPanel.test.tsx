@@ -8,6 +8,7 @@
 
 import {describe, expect, vi} from 'vitest';
 import {HttpResponse} from 'msw';
+import {z} from 'zod';
 import {it} from '#/vitest-modules/test-extend';
 import {renderWithRouter} from '#/vitest-modules/render-with-router';
 import {
@@ -118,6 +119,49 @@ describe('<DiagramPanel />', () => {
 			completed: false,
 			canceled: false,
 			suspended: false,
+		});
+
+		await expect.element(screen.getByTestId('state-overlay-startEvent_1-active')).toHaveTextContent('3');
+	});
+
+	it.for([
+		{
+			scenario: 'variable plus date and tenant',
+			variable: [{name: 'status', operator: 'equals' as const, value: '"open"'}],
+			tenantId: 'tenant-A',
+		},
+		{scenario: 'date alone', variable: undefined, tenantId: undefined},
+	])('should apply $scenario to statistics', async ({variable, tenantId}, {worker}) => {
+		worker.use(
+			mockGetProcessDefinitionXmlEndpoint({successResponse: HttpResponse.text(BPMN_XML)}),
+			mockGetProcessDefinitionStatisticsEndpoint({
+				schema: z.object({
+					filter: z.object({
+						startDate: z.object({$gt: z.literal('2021-02-21T20:00:00.000Z')}),
+						tenantId: tenantId ? z.object({$eq: z.literal('tenant-A')}) : z.undefined().optional(),
+						variables: variable
+							? z.array(z.object({name: z.literal('status'), value: z.object({$eq: z.literal('"open"')})}))
+							: z.undefined().optional(),
+					}),
+				}),
+				successResponse: HttpResponse.json(
+					createGetProcessDefinitionStatisticsResponse([
+						createProcessDefinitionStatistic({elementId: 'startEvent_1', active: 3}),
+					]),
+				),
+				failureResponse: new HttpResponse(null, {status: 400}),
+			}),
+		);
+		const screen = await renderDiagramPanel({
+			processDefinitionSelection: {kind: 'single-version', definition: DEFINITION},
+			onElementSelection: vi.fn(),
+			active: true,
+			incidents: true,
+			completed: false,
+			canceled: false,
+			suspended: false,
+			variable,
+			otherFilters: {tenantId, startDateFrom: '2021-02-21T20:00:00Z'},
 		});
 
 		await expect.element(screen.getByTestId('state-overlay-startEvent_1-active')).toHaveTextContent('3');

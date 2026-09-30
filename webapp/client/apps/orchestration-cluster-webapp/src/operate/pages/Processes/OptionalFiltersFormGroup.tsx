@@ -19,6 +19,8 @@ import {TextInputField} from '#/operate/shared/TextInputField/TextInputField';
 import {TextAreaField} from '#/operate/shared/TextAreaField/TextAreaField';
 import {FieldContainer, ButtonContainer} from '#/operate/shared/FiltersPanel/styled';
 import {mergeValidators} from '#/operate/shared/utils/mergeValidators';
+import {VariablesFilter} from './VariablesFilter/VariablesFilter';
+import type {VariableCondition} from './VariablesFilter/variableConditions';
 import {
 	validateIdsCharacters,
 	validateIdsLength,
@@ -30,9 +32,8 @@ import {
 	validateBatchOperationKeyComplete,
 } from '#/operate/shared/utils/validators';
 
-// The legacy 'variable' optional filter is deliberately omitted here — it stays hidden until
-// #57671 (conditions logic) and #57672 (modal) land.
 type OptionalFilter =
+	| 'variable'
 	| 'processInstanceKey'
 	| 'parentProcessInstanceKey'
 	| 'businessId'
@@ -56,6 +57,7 @@ type OptionalFilterValues = {
 };
 
 const optionalFilters: OptionalFilter[] = [
+	'variable',
 	'processInstanceKey',
 	'businessId',
 	'batchOperationKey',
@@ -77,6 +79,10 @@ const OPTIONAL_FILTER_FIELDS: Record<
 		keys: (keyof OptionalFilterValues)[];
 	}
 > = {
+	variable: {
+		keys: [],
+		labelKey: 'operate.processes.variableFilter.title',
+	},
 	processInstanceKey: {
 		keys: ['processInstanceKey'],
 		labelKey: 'operate.processes.filters.processInstanceKey',
@@ -127,16 +133,25 @@ const OPTIONAL_FILTER_FIELDS: Record<
 
 type Props = {
 	filters: OptionalFilterValues;
+	variable?: VariableCondition[];
+	onVariableChange: (conditions?: VariableCondition[]) => void;
 	visibleFilters: OptionalFilter[];
 	onVisibleFilterChange: React.Dispatch<React.SetStateAction<OptionalFilter[]>>;
 };
 
-const OptionalFiltersFormGroup: React.FC<Props> = ({filters, visibleFilters, onVisibleFilterChange}) => {
+const OptionalFiltersFormGroup: React.FC<Props> = ({
+	filters,
+	variable,
+	onVariableChange,
+	visibleFilters,
+	onVisibleFilterChange,
+}) => {
 	const {t} = useTranslation();
 	const form = useForm();
 
 	useEffect(() => {
 		const activeFilters: OptionalFilter[] = [
+			...(variable?.length ? (['variable'] as const) : []),
 			...(
 				[
 					'processInstanceKey',
@@ -157,7 +172,7 @@ const OptionalFiltersFormGroup: React.FC<Props> = ({filters, visibleFilters, onV
 			const nextVisibleFilters = Array.from(new Set([...currentVisibleFilters, ...activeFilters]));
 			return nextVisibleFilters.length === currentVisibleFilters.length ? currentVisibleFilters : nextVisibleFilters;
 		});
-	}, [filters, onVisibleFilterChange]);
+	}, [filters, variable, onVisibleFilterChange]);
 
 	const [isStartDateRangeModalOpen, setIsStartDateRangeModalOpen] = useState<boolean>(false);
 	const [isEndDateRangeModalOpen, setIsEndDateRangeModalOpen] = useState<boolean>(false);
@@ -185,6 +200,8 @@ const OptionalFiltersFormGroup: React.FC<Props> = ({filters, visibleFilters, onV
 					<FieldContainer key={filter}>
 						{(() => {
 							switch (filter) {
+								case 'variable':
+									return <VariablesFilter conditions={variable} onChange={onVariableChange} />;
 								case 'businessId':
 									return (
 										<AdvancedStringFilter
@@ -272,6 +289,10 @@ const OptionalFiltersFormGroup: React.FC<Props> = ({filters, visibleFilters, onV
 									onVisibleFilterChange((currentVisibleFilters) =>
 										currentVisibleFilters.filter((visibleFilter) => visibleFilter !== filter),
 									);
+									if (filter === 'variable') {
+										onVariableChange(undefined);
+										return;
+									}
 
 									OPTIONAL_FILTER_FIELDS[filter].keys.forEach((key) => {
 										form.change(key, undefined);

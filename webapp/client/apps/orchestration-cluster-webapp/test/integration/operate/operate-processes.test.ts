@@ -163,6 +163,31 @@ test.describe('Operate processes page', () => {
 		await expect(operateProcessesPage.resetFiltersButton).toBeDisabled();
 	});
 
+	test('should load a variable-filter deep link and send its conditions with other filters', async ({
+		page,
+		operateProcessesPage,
+	}) => {
+		const variable = JSON.stringify([
+			{name: 'status', operator: 'equals', value: '"open"'},
+			{name: 'region', operator: 'exists', value: ''},
+		]);
+		const request = page.waitForRequest((candidate) => candidate.url().endsWith('/v2/process-instances/search'));
+		await operateProcessesPage.goto(`?businessId=eq_order-123&variable=${encodeURIComponent(variable)}`);
+
+		expect((await request).postDataJSON().filter).toMatchObject({
+			businessId: {$eq: 'order-123'},
+			variables: [
+				{name: 'status', value: {$eq: '"open"'}},
+				{name: 'region', value: {$exists: true}},
+			],
+		});
+		await expect(page.getByRole('list', {name: 'Active variable filters'})).toContainText('region exists');
+		await page.getByRole('list', {name: 'Active variable filters'}).hover();
+		await page.getByRole('button', {name: 'Remove Variables Filter'}).click();
+		await expect(page).not.toHaveURL(/variable=/);
+		await expect(page).toHaveURL(/businessId=eq_order-123/);
+	});
+
 	test('should list the matching process instances and link each one to its details page', async ({
 		network,
 		page,

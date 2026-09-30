@@ -8,6 +8,7 @@
 
 import {useSearch} from '@tanstack/react-router';
 import {Processes} from './Processes';
+import {variableConditionsSchema} from './VariablesFilter/variableConditions';
 
 // Test-only wrapper: the ad-hoc test route has no validateSearch, so mirror the
 // real route schema's coercions here — numeric-looking values arrive as numbers
@@ -36,6 +37,7 @@ function ProcessesHarness() {
 				processInstanceKey={toOptionalString(search.processInstanceKey)}
 				parentProcessInstanceKey={toOptionalString(search.parentProcessInstanceKey)}
 				businessId={toOptionalString(search.businessId)}
+				variable={variableConditionsSchema.parse(search.variable)}
 				batchOperationKey={toOptionalString(search.batchOperationKey)}
 				errorMessage={toOptionalString(search.errorMessage)}
 				incidentErrorHashCode={

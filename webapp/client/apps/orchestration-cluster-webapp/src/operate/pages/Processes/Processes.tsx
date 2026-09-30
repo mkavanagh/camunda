@@ -6,7 +6,7 @@
  * except in compliance with the Camunda License 1.0.
  */
 
-import {useMemo, useState} from 'react';
+import {useCallback, useMemo, useState} from 'react';
 import {useTranslation} from 'react-i18next';
 import {useSuspenseQuery} from '@tanstack/react-query';
 import {useNavigate} from '@tanstack/react-router';
@@ -30,6 +30,7 @@ import {IndentedGroup, CanceledIcon} from './styled';
 import {OptionalFiltersFormGroup, type OptionalFilter, type OptionalFilterValues} from './OptionalFiltersFormGroup';
 import {DiagramPanel, type ProcessDefinitionSelection} from './DiagramPanel';
 import {InstancesTable} from './InstancesTable';
+import type {VariableCondition} from './VariablesFilter/variableConditions';
 
 type FiltersFormValues = OptionalFilterValues & {tenantId?: string};
 
@@ -44,6 +45,7 @@ type Props = {
 	canceled: boolean;
 	suspended: boolean;
 	sort?: string;
+	variable?: VariableCondition[];
 } & FiltersFormValues;
 
 type ProcessItem = {id: string; label: string};
@@ -63,6 +65,7 @@ const Processes: React.FC<Props> = ({
 	businessId,
 	batchOperationKey,
 	errorMessage,
+	variable,
 	incidentErrorHashCode,
 	hasRetriesLeft,
 	startDateFrom,
@@ -81,6 +84,12 @@ const Processes: React.FC<Props> = ({
 		}),
 	);
 	const [visibleFilters, setVisibleFilters] = useState<OptionalFilter[]>([]);
+	const handleVariableChange = useCallback(
+		(conditions?: VariableCondition[]) => {
+			void navigate({to: '.', search: (prev) => ({...prev, variable: conditions})});
+		},
+		[navigate],
+	);
 
 	const optionalFilterValues = useMemo<OptionalFilterValues>(
 		() => ({
@@ -161,6 +170,7 @@ const Processes: React.FC<Props> = ({
 		tenantId !== undefined ||
 		incidentErrorHashCode !== undefined ||
 		Object.values(optionalFilterValues).some((value) => value !== undefined);
+	const hasVariableFilter = variable !== undefined && variable.length > 0;
 
 	const isResetDisabled =
 		active &&
@@ -172,6 +182,7 @@ const Processes: React.FC<Props> = ({
 		version === undefined &&
 		elementId === undefined &&
 		!hasOptionalFilters &&
+		!hasVariableFilter &&
 		visibleFilters.length === 0;
 
 	const handleFiltersSubmit = (values: FiltersFormValues) => {
@@ -382,6 +393,8 @@ const Processes: React.FC<Props> = ({
 									</div>
 									<OptionalFiltersFormGroup
 										filters={optionalFilterValues}
+										variable={variable}
+										onVariableChange={handleVariableChange}
 										visibleFilters={visibleFilters}
 										onVisibleFilterChange={setVisibleFilters}
 									/>
@@ -406,6 +419,20 @@ const Processes: React.FC<Props> = ({
 					completed={completed}
 					canceled={canceled}
 					suspended={suspended}
+					variable={variable}
+					otherFilters={{
+						tenantId,
+						processInstanceKey,
+						parentProcessInstanceKey,
+						batchOperationKey,
+						errorMessage,
+						incidentErrorHashCode,
+						hasRetriesLeft,
+						startDateFrom,
+						startDateTo,
+						endDateFrom,
+						endDateTo,
+					}}
 				/>
 			}
 			bottomPanel={
@@ -420,6 +447,7 @@ const Processes: React.FC<Props> = ({
 						businessId,
 						batchOperationKey,
 						errorMessage,
+						variable,
 						incidentErrorHashCode,
 						hasRetriesLeft,
 						startDateFrom,
