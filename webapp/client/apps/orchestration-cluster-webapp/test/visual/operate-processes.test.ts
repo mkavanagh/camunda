@@ -99,11 +99,23 @@ test('should show expanded failed operation details @desktop', async ({network, 
 				createQueryBatchOperationItemsResponse({
 					items: [
 						createBatchOperationItem({
+							itemKey: 'incident-1',
 							processInstanceKey: '2251799813685280',
 							state: 'FAILED',
 							errorMessage: 'Operation timed out',
 						}),
-						createBatchOperationItem({processInstanceKey: '2251799813685281', state: 'COMPLETED'}),
+						createBatchOperationItem({
+							itemKey: 'incident-2',
+							processInstanceKey: '2251799813685280',
+							state: 'FAILED',
+							errorMessage: 'Retry exhausted',
+						}),
+						createBatchOperationItem({
+							itemKey: 'incident-3',
+							processInstanceKey: '2251799813685280',
+							state: 'FAILED',
+						}),
+						createBatchOperationItem({itemKey: 'item-4', processInstanceKey: '2251799813685281', state: 'COMPLETED'}),
 					],
 				}),
 			),
@@ -112,7 +124,9 @@ test('should show expanded failed operation details @desktop', async ({network, 
 	);
 	await operateProcessesPage.goto('?batchOperationKey=2f5b1beb-cbeb-41c8-a2f0-4c0bcf76c4ee');
 	await page.getByRole('button', {name: 'Show failure details for instance 2251799813685280'}).click();
-	await expect(page.getByText('Operation timed out')).toBeVisible();
+	await expect(page.getByRole('row').filter({hasText: 'Operation timed out'})).toContainText(
+		/Operation timed out\s+Retry exhausted\s+Operation failed/,
+	);
 
 	await movePointerAwayFromNavigation(page);
 	await expect(operateProcessesPage.instancesTable).toHaveScreenshot('failed-operation-details.png');

@@ -132,11 +132,11 @@ const InstancesTable: React.FC<Props> = ({search, isActionMode, renderActions}) 
 			failures: items
 				.filter((item) => item.state === 'FAILED')
 				.reduce((messages, item) => {
-					if (!messages.has(item.processInstanceKey) || item.errorMessage !== null) {
-						messages.set(item.processInstanceKey, item.errorMessage);
-					}
+					const errors = messages.get(item.processInstanceKey) ?? [];
+					errors.push(item.errorMessage);
+					messages.set(item.processInstanceKey, errors);
 					return messages;
-				}, new Map<string, string | null>()),
+				}, new Map<string, (string | null)[]>()),
 		}),
 		refetchInterval: (query) =>
 			query.state.data?.items.some(({state}) => state === 'ACTIVE') ? ACTIVE_ITEMS_REFETCH_INTERVAL_MS : false,
@@ -338,11 +338,15 @@ const InstancesTable: React.FC<Props> = ({search, isActionMode, renderActions}) 
 									if (isLoadingOperationItems || isOperationItemsError) {
 										return null;
 									}
-									const error = operationItems?.failures.get(row.processInstanceKey);
-									return error === undefined || error === ''
+									const errors = operationItems?.failures.get(row.processInstanceKey);
+									const message = errors
+										?.map((error) => error ?? t('operate.processes.instancesTable.operationFailed'))
+										.filter(Boolean)
+										.join('\n');
+									return !message
 										? null
 										: {
-												message: error ?? t('operate.processes.instancesTable.operationFailed'),
+												message,
 												expandLabel: t('operate.processes.instancesTable.expandFailure', {
 													key: row.processInstanceKey,
 												}),

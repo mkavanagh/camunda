@@ -290,6 +290,7 @@ describe('<InstancesTable />', () => {
 
 		const screen = await renderInstancesTable();
 
+		await expect.element(screen.getByRole('link', {name: 'View instance 1'})).toBeVisible();
 		await expect.element(screen.getByRole('columnheader', {name: 'Operation State'})).not.toBeInTheDocument();
 	});
 
@@ -509,6 +510,46 @@ describe('<InstancesTable />', () => {
 		await expect.element(screen.getByText('FAILED, COMPLETED')).toBeVisible();
 		await userEvent.click(screen.getByRole('button', {name: 'Show failure details for instance 1'}));
 		await expect.element(screen.getByText('Incident failed')).toBeVisible();
+	});
+
+	it('should show every failed item message for one instance with a fallback for missing messages', async ({
+		worker,
+	}) => {
+		worker.use(
+			mockQueryProcessInstancesEndpoint({
+				successResponse: HttpResponse.json(
+					createQueryProcessInstancesResponse({items: [createProcessInstance({processInstanceKey: '1'})]}),
+				),
+			}),
+			mockQueryBatchOperationItemsEndpoint({
+				successResponse: HttpResponse.json(
+					createQueryBatchOperationItemsResponse({
+						items: [
+							createBatchOperationItem({
+								itemKey: 'item-1',
+								processInstanceKey: '1',
+								state: 'FAILED',
+								errorMessage: 'Incident A failed',
+							}),
+							createBatchOperationItem({
+								itemKey: 'item-2',
+								processInstanceKey: '1',
+								state: 'FAILED',
+								errorMessage: 'Incident B failed',
+							}),
+							createBatchOperationItem({itemKey: 'item-3', processInstanceKey: '1', state: 'FAILED'}),
+						],
+					}),
+				),
+			}),
+		);
+		const screen = await renderInstancesTable({...BASE_SEARCH, batchOperationKey: 'batch-op-1'});
+
+		await userEvent.click(screen.getByRole('button', {name: 'Show failure details for instance 1'}));
+
+		await expect
+			.element(screen.getByRole('row').filter({hasText: 'Incident A failed'}))
+			.toMatchTextContent(/Incident A failed\s+Incident B failed\s+Operation failed/);
 	});
 
 	it.for([1, 50])('should find a failed item beyond a page of %s operation items', async (pageSize, {worker}) => {
