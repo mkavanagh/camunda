@@ -11,6 +11,7 @@ import {CopyButton} from '#/operate/shared/CopyButton/CopyButton';
 import {PanelHeader, Description, DescriptionTitle, DescriptionData} from './styled';
 import type {ProcessDefinitionSelection} from './DiagramPanel';
 import {getProcessDefinitionName} from './getProcessDefinitionName';
+import {ProcessOperations} from './ProcessOperations/ProcessOperations';
 
 type Props = {
 	processDefinitionSelection: ProcessDefinitionSelection;
@@ -50,6 +51,12 @@ const DiagramHeader: React.FC<Props> = ({processDefinitionSelection, panelHeader
 					<DescriptionTitle>{t('operate.processes.diagramHeader.versionTag')}</DescriptionTitle>
 					<DescriptionData title={versionTag}>{versionTag}</DescriptionData>
 				</Description>
+			)}
+			{processDefinitionSelection.kind === 'single-version' && (
+				<ProcessOperations
+					key={processDefinitionSelection.definition.processDefinitionKey}
+					definition={processDefinitionSelection.definition}
+				/>
 			)}
 		</PanelHeader>
 	);

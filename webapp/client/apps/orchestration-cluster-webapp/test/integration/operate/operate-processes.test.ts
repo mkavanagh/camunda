@@ -7,7 +7,13 @@
  */
 
 import {test, expect} from '#/pw-modules/test-extend';
-import {HttpResponse} from 'msw';
+import {http, HttpResponse} from 'msw';
+import {
+	deleteResourceRequestBodySchema,
+	endpoints,
+	queryProcessDefinitionsRequestBodySchema,
+	queryProcessInstancesRequestBodySchema,
+} from '@camunda/camunda-api-zod-schemas/8.11';
 import {
 	mockCurrentUserEndpoint,
 	mockGetIncidentProcessInstanceStatisticsByErrorEndpoint,
@@ -24,6 +30,8 @@ import {
 	mockGetProcessInstanceEndpoint,
 	mockGetProcessInstanceWaitStateStatisticsEndpoint,
 	mockQueryProcessInstanceIncidentsEndpoint,
+	mockDeleteResourceEndpoint,
+	mockGetProcessDefinitionStatisticsEndpoint,
 } from '#/shared-test-modules/mock-handlers';
 import {createCurrentUser} from '#/shared-test-modules/api-mocks/current-user';
 import {createLicense} from '#/shared-test-modules/api-mocks/license';
@@ -43,6 +51,7 @@ import {
 	createQueryBatchOperationItemsResponse,
 } from '#/shared-test-modules/api-mocks/batch-operations';
 import {createPaginatedResponse, createProblemDetails} from '#/shared-test-modules/api-mocks/shared';
+import {createGetProcessDefinitionStatisticsResponse} from '#/shared-test-modules/api-mocks/process-definition-statistics';
 
 const PROCESS_INSTANCE_XML =
 	'<definitions xmlns="http://www.omg.org/spec/BPMN/20100524/MODEL"><process id="order-process"><callActivity id="call-activity" /></process></definitions>';
@@ -113,6 +122,162 @@ test.beforeEach(({network}) => {
 });
 
 test.describe('Operate processes page', () => {
+	test('should recover from a forbidden deletion, then delete without losing tenant or filters', async ({
+		network,
+		page,
+		operateProcessesPage,
+	}) => {
+		const definition = createProcessDefinition({
+			name: 'Order Process',
+			processDefinitionId: 'order-process',
+			processDefinitionKey: '2251799813685279',
+			tenantId: 'tenant-a',
+			version: 2,
+		});
+		network.use(
+			mockQueryProcessDefinitionsEndpoint({
+				schema: queryProcessDefinitionsRequestBodySchema.refine((body) => body.filter?.state === 'DRAINING'),
+				successResponse: HttpResponse.json(createQueryProcessDefinitionsResponse()),
+				failureResponse: HttpResponse.json(createQueryProcessDefinitionsResponse({items: [definition]})),
+			}),
+			mockQueryProcessInstancesEndpoint({
+				schema: queryProcessInstancesRequestBodySchema.refine(
+					(body) =>
+						body.page?.limit === 0 &&
+						typeof body.filter?.processDefinitionKey === 'object' &&
+						body.filter.processDefinitionKey.$eq === definition.processDefinitionKey,
+				),
+				successResponse: HttpResponse.json(createQueryProcessInstancesResponse()),
+				failureResponse: HttpResponse.json(createQueryProcessInstancesResponse()),
+			}),
+			mockGetProcessDefinitionXmlEndpoint({successResponse: HttpResponse.text('')}),
+			mockGetProcessDefinitionStatisticsEndpoint({
+				successResponse: HttpResponse.json(createGetProcessDefinitionStatisticsResponse([])),
+			}),
+			mockDeleteResourceEndpoint({successResponse: new HttpResponse(null, {status: 403})}),
+		);
+		await operateProcessesPage.goto('?process=order-process&version=2&tenantId=tenant-a&businessId=order-1');
+		const action = page.getByRole('button', {name: 'Delete Process Definition "Order Process - Version 2"'});
+		await expect(action).toBeEnabled();
+		await action.click();
+		await expect(page.getByRole('dialog')).toContainText('Order Process - Version 2');
+		await expect(page.getByRole('dialog').getByRole('button', {name: 'Delete'})).toBeDisabled();
+		await page.getByRole('dialog').getByText('Yes, I confirm I want to delete this process definition.').click();
+		await page.getByRole('dialog').getByRole('button', {name: 'Delete'}).click();
+		await expect(page.getByText("You don't have permission to perform this operation")).toBeVisible();
+		await expect(action).toBeEnabled();
+		expect(new URL(page.url()).searchParams.get('process')).toBe('order-process');
+
+		network.use(
+			mockDeleteResourceEndpoint({
+				schema: deleteResourceRequestBodySchema.refine((body) => body?.deleteHistory === true),
+				successResponse: HttpResponse.json({}),
+				failureResponse: new HttpResponse(null, {status: 400}),
+			}),
+		);
+		await action.click();
+		await expect(page.getByRole('dialog').getByRole('button', {name: 'Delete'})).toBeDisabled();
+		await page.getByRole('dialog').getByText('Yes, I confirm I want to delete this process definition.').click();
+		const submitted = page.waitForRequest(
+			(request) =>
+				request.method() === 'POST' &&
+				request.url().endsWith(`/v2/resources/${definition.processDefinitionKey}/deletion`),
+		);
+		const refreshed = page.waitForRequest(
+			(request) =>
+				request.method() === 'POST' &&
+				request.url().endsWith('/v2/process-definitions/search') &&
+				request.postDataJSON()?.filter?.tenantId === 'tenant-a',
+		);
+		await page.getByRole('dialog').getByRole('button', {name: 'Delete'}).click();
+		expect((await submitted).postDataJSON()).toEqual({deleteHistory: true});
+		await refreshed;
+		await expect(page.getByText('Operation created', {exact: true})).toBeVisible();
+		await expect(page).toHaveURL(/\/operate\/processes\?[^#]*tenantId=tenant-a/);
+		expect(new URL(page.url()).searchParams.get('process')).toBe('order-process');
+		expect(new URL(page.url()).searchParams.get('version')).toBe('2');
+		expect(new URL(page.url()).searchParams.get('businessId')).toBe('order-1');
+		network.use(
+			mockQueryProcessDefinitionsEndpoint({
+				schema: queryProcessDefinitionsRequestBodySchema.refine((body) => body.filter?.state === 'DRAINING'),
+				successResponse: HttpResponse.json(
+					createQueryProcessDefinitionsResponse({items: [{...definition, state: 'DRAINING'}]}),
+				),
+				failureResponse: HttpResponse.json(
+					createQueryProcessDefinitionsResponse({items: [{...definition, state: 'DRAINING'}]}),
+				),
+			}),
+		);
+		await page.reload();
+		await expect(page.getByText('Draining', {exact: true})).toBeVisible();
+		await expect(action).not.toBeVisible();
+		network.use(
+			mockQueryProcessDefinitionsEndpoint({
+				schema: queryProcessDefinitionsRequestBodySchema.refine((body) => body.filter?.state === 'DRAINING'),
+				successResponse: HttpResponse.json(createQueryProcessDefinitionsResponse()),
+				failureResponse: HttpResponse.json(
+					createQueryProcessDefinitionsResponse({items: [{...definition, state: 'DELETED'}]}),
+				),
+			}),
+		);
+		const historyAction = page.getByRole('button', {
+			name: 'Delete Process Definition History "Order Process - Version 2"',
+		});
+		await expect(historyAction).toBeEnabled({timeout: 15000});
+		let historySubmissions = 0;
+		network.use(
+			http.post(endpoints.deleteResource.getUrl({resourceKey: ':resourceKey'}), () => {
+				historySubmissions += 1;
+				return HttpResponse.json({
+					resourceKey: definition.processDefinitionKey,
+					batchOperation: {
+						batchOperationKey: `batch-${historySubmissions}`,
+						batchOperationType: 'DELETE_PROCESS_DEFINITION',
+					},
+				});
+			}),
+			mockGetBatchOperationEndpoint({
+				successResponse: HttpResponse.json(
+					createBatchOperation({
+						batchOperationKey: 'batch-1',
+						batchOperationType: 'DELETE_PROCESS_DEFINITION',
+						state: 'ACTIVE',
+					}),
+				),
+			}),
+		);
+		await historyAction.click();
+		await page
+			.getByRole('dialog')
+			.getByText('Yes, I confirm I want to permanently delete this process definition history.')
+			.click();
+		await page.getByRole('dialog').getByRole('button', {name: 'Delete'}).click();
+		await expect(historyAction).toBeDisabled();
+		expect(historySubmissions).toBe(1);
+		network.use(
+			mockGetBatchOperationEndpoint({
+				successResponse: HttpResponse.json(
+					createBatchOperation({
+						batchOperationKey: 'batch-1',
+						batchOperationType: 'DELETE_PROCESS_DEFINITION',
+						state: 'FAILED',
+					}),
+				),
+			}),
+		);
+		const retryHistory = page.getByRole('button', {
+			name: 'The previous deletion failed. Retry deleting this process definition.',
+		});
+		await expect(retryHistory).toBeEnabled({timeout: 15000});
+		await retryHistory.click();
+		await page
+			.getByRole('dialog')
+			.getByText('Yes, I confirm I want to permanently delete this process definition history.')
+			.click();
+		await page.getByRole('dialog').getByRole('button', {name: 'Delete'}).click();
+		await expect.poll(() => historySubmissions).toBe(2);
+	});
+
 	test('should cancel all matching instances and discard selection after acceptance', async ({
 		network,
 		page,

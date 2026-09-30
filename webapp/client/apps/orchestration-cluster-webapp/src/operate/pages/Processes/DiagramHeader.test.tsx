@@ -9,7 +9,18 @@
 import {describe, expect} from 'vitest';
 import {render} from 'vitest-browser-react';
 import {it} from '#/vitest-modules/test-extend';
-import {createProcessDefinition} from '#/shared-test-modules/api-mocks/process-definitions';
+import {renderWithRouter} from '#/vitest-modules/render-with-router';
+import {HttpResponse} from 'msw';
+import {queryProcessDefinitionsRequestBodySchema} from '@camunda/camunda-api-zod-schemas/8.11';
+import {
+	mockQueryProcessDefinitionsEndpoint,
+	mockQueryProcessInstancesEndpoint,
+} from '#/shared-test-modules/mock-handlers';
+import {
+	createProcessDefinition,
+	createQueryProcessDefinitionsResponse,
+} from '#/shared-test-modules/api-mocks/process-definitions';
+import {createQueryProcessInstancesResponse} from '#/shared-test-modules/api-mocks/process-instances';
 import {DiagramHeader} from './DiagramHeader';
 
 describe('<DiagramHeader />', () => {
@@ -19,28 +30,55 @@ describe('<DiagramHeader />', () => {
 		await expect.element(screen.getByText('Process')).toBeVisible();
 	});
 
-	it('shows the process name and ID for a single selected version', async () => {
-		const screen = await render(
-			<DiagramHeader
-				processDefinitionSelection={{
-					kind: 'single-version',
-					definition: createProcessDefinition({name: 'Order Process', processDefinitionKey: '123'}),
-				}}
-			/>,
+	it('shows the process name, ID and deletion only for a single selected version', async ({worker}) => {
+		const definition = createProcessDefinition({name: 'Order Process', processDefinitionKey: '123'});
+		worker.use(
+			mockQueryProcessDefinitionsEndpoint({
+				schema: queryProcessDefinitionsRequestBodySchema.refine((body) => body.filter?.state === 'DRAINING'),
+				successResponse: HttpResponse.json(createQueryProcessDefinitionsResponse()),
+				failureResponse: HttpResponse.json(createQueryProcessDefinitionsResponse({items: [definition]})),
+			}),
+			mockQueryProcessInstancesEndpoint({successResponse: HttpResponse.json(createQueryProcessInstancesResponse())}),
+		);
+		const screen = await renderWithRouter(
+			() => (
+				<DiagramHeader
+					processDefinitionSelection={{
+						kind: 'single-version',
+						definition,
+					}}
+				/>
+			),
+			{path: '/operate/processes', initialEntry: '/operate/processes'},
 		);
 
 		await expect.element(screen.getByRole('heading', {name: 'Order Process'})).toBeVisible();
 		await expect.element(screen.getByTitle('my-process:1:0')).toBeVisible();
+		await expect
+			.element(screen.getByRole('button', {name: 'Delete Process Definition "Order Process - Version 1"'}))
+			.toBeEnabled();
 	});
 
-	it('shows the version tag when present', async () => {
-		const screen = await render(
-			<DiagramHeader
-				processDefinitionSelection={{
-					kind: 'single-version',
-					definition: createProcessDefinition({versionTag: 'release-1'}),
-				}}
-			/>,
+	it('shows the version tag when present', async ({worker}) => {
+		const definition = createProcessDefinition({versionTag: 'release-1'});
+		worker.use(
+			mockQueryProcessDefinitionsEndpoint({
+				schema: queryProcessDefinitionsRequestBodySchema.refine((body) => body.filter?.state === 'DRAINING'),
+				successResponse: HttpResponse.json(createQueryProcessDefinitionsResponse()),
+				failureResponse: HttpResponse.json(createQueryProcessDefinitionsResponse({items: [definition]})),
+			}),
+			mockQueryProcessInstancesEndpoint({successResponse: HttpResponse.json(createQueryProcessInstancesResponse())}),
+		);
+		const screen = await renderWithRouter(
+			() => (
+				<DiagramHeader
+					processDefinitionSelection={{
+						kind: 'single-version',
+						definition,
+					}}
+				/>
+			),
+			{path: '/operate/processes', initialEntry: '/operate/processes'},
 		);
 
 		await expect.element(screen.getByText('release-1')).toBeVisible();
@@ -58,5 +96,6 @@ describe('<DiagramHeader />', () => {
 
 		await expect.element(screen.getByRole('heading', {name: 'Order Process'})).toBeVisible();
 		await expect.element(screen.getByTitle('order-process')).toBeVisible();
+		await expect.element(screen.getByTestId('delete-operation')).not.toBeInTheDocument();
 	});
 });

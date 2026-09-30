@@ -13,8 +13,15 @@ import {renderWithRouter} from '#/vitest-modules/render-with-router';
 import {
 	mockGetProcessDefinitionXmlEndpoint,
 	mockGetProcessDefinitionStatisticsEndpoint,
+	mockQueryProcessDefinitionsEndpoint,
+	mockQueryProcessInstancesEndpoint,
 } from '#/shared-test-modules/mock-handlers';
-import {createProcessDefinition} from '#/shared-test-modules/api-mocks/process-definitions';
+import {queryProcessDefinitionsRequestBodySchema} from '@camunda/camunda-api-zod-schemas/8.11';
+import {
+	createProcessDefinition,
+	createQueryProcessDefinitionsResponse,
+} from '#/shared-test-modules/api-mocks/process-definitions';
+import {createQueryProcessInstancesResponse} from '#/shared-test-modules/api-mocks/process-instances';
 import {
 	createProcessDefinitionStatistic,
 	createGetProcessDefinitionStatisticsResponse,
@@ -63,6 +70,14 @@ const BPMN_XML_WITH_SUBPROCESS = `<?xml version="1.0" encoding="UTF-8"?>
 </bpmn:definitions>`;
 
 const DEFINITION = createProcessDefinition({processDefinitionKey: '2251799813685279'});
+const DEFINITION_HANDLERS = [
+	mockQueryProcessDefinitionsEndpoint({
+		schema: queryProcessDefinitionsRequestBodySchema.refine((body) => body.filter?.state === 'DRAINING'),
+		successResponse: HttpResponse.json(createQueryProcessDefinitionsResponse()),
+		failureResponse: HttpResponse.json(createQueryProcessDefinitionsResponse({items: [DEFINITION]})),
+	}),
+	mockQueryProcessInstancesEndpoint({successResponse: HttpResponse.json(createQueryProcessInstancesResponse())}),
+];
 
 describe('<DiagramPanel />', () => {
 	it('shows an empty message when no process is selected', async () => {
@@ -100,6 +115,7 @@ describe('<DiagramPanel />', () => {
 
 	it('renders the diagram and a statistics overlay for a single selected version', async ({worker}) => {
 		worker.use(
+			...DEFINITION_HANDLERS,
 			mockGetProcessDefinitionXmlEndpoint({successResponse: HttpResponse.text(BPMN_XML)}),
 			mockGetProcessDefinitionStatisticsEndpoint({
 				successResponse: HttpResponse.json(
@@ -125,6 +141,7 @@ describe('<DiagramPanel />', () => {
 
 	it('should show an empty state when the selected definition has no XML', async ({worker}) => {
 		worker.use(
+			...DEFINITION_HANDLERS,
 			mockGetProcessDefinitionXmlEndpoint({successResponse: HttpResponse.text('')}),
 			mockGetProcessDefinitionStatisticsEndpoint({
 				successResponse: HttpResponse.json(createGetProcessDefinitionStatisticsResponse([])),
@@ -147,6 +164,7 @@ describe('<DiagramPanel />', () => {
 
 	it('shows an incidents badge on a subprocess containing an element with an incident', async ({worker}) => {
 		worker.use(
+			...DEFINITION_HANDLERS,
 			mockGetProcessDefinitionXmlEndpoint({successResponse: HttpResponse.text(BPMN_XML_WITH_SUBPROCESS)}),
 			mockGetProcessDefinitionStatisticsEndpoint({
 				successResponse: HttpResponse.json(
