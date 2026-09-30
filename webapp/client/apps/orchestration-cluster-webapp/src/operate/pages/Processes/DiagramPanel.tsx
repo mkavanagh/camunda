@@ -7,6 +7,7 @@
  */
 
 import {useContext} from 'react';
+import {createPortal} from 'react-dom';
 import {useTranslation} from 'react-i18next';
 import type {ProcessDefinition} from '@camunda/camunda-api-zod-schemas/8.11';
 import {Diagram} from '#/operate/shared/Diagram';
@@ -18,7 +19,11 @@ import {useDiagramXml} from './useDiagramXml';
 import {useDiagramStatisticsOverlays} from './useDiagramStatisticsOverlays';
 import {getStatisticsFilter} from './getStatisticsFilter';
 import {getProcessDefinitionName} from './getProcessDefinitionName';
-import {Section} from './styled';
+import {Section, Badge} from './styled';
+import {isMoveTarget} from './batchModificationTargets';
+import type {ProcessesMode} from './ProcessesLayout';
+import {InlineNotification, Button, Dropdown} from '@carbon/react';
+import {useBatchModificationStatistics, type BatchModificationScope} from './useBatchModificationStatistics';
 
 type ProcessDefinitionSelection =
 	| {kind: 'no-match'}
@@ -36,13 +41,23 @@ function isStatisticsPayload(
 	);
 }
 
-function StatisticsOverlays() {
+function StatisticsOverlays({modificationCount}: {modificationCount?: number}) {
 	const overlays = useContext(DiagramOverlayContext);
 
-	return overlays.map(({container, payload, elementId}) => {
+	return overlays.map(({container, payload, elementId, type}) => {
+		if (type === 'batch-modification-source' || type === 'batch-modification-target') {
+			return modificationCount === undefined
+				? null
+				: createPortal(
+						<Badge>{type === 'batch-modification-source' ? `-${modificationCount}` : `+${modificationCount}`}</Badge>,
+						container,
+						elementId,
+					);
+		}
 		if (!isStatisticsPayload(payload)) {
 			return null;
 		}
+
 		return (
 			<StateOverlay
 				key={`${elementId}-${payload.elementState}`}
@@ -59,6 +74,10 @@ type Props = {
 	processDefinitionSelection: ProcessDefinitionSelection;
 	elementId?: string;
 	onElementSelection: (elementId?: string) => void;
+	mode?: ProcessesMode;
+	modificationScope?: BatchModificationScope;
+	selectedTargetElementId?: string;
+	onTargetElementSelection?: (elementId?: string) => void;
 	active: boolean;
 	incidents: boolean;
 	completed: boolean;
@@ -70,6 +89,10 @@ const DiagramPanel: React.FC<Props> = ({
 	processDefinitionSelection,
 	elementId,
 	onElementSelection,
+	mode = 'list',
+	modificationScope,
+	selectedTargetElementId,
+	onTargetElementSelection,
 	active,
 	incidents,
 	completed,
@@ -86,7 +109,35 @@ const DiagramPanel: React.FC<Props> = ({
 			? getProcessDefinitionName(processDefinitionSelection.definition)
 			: t('operate.processes.diagramHeader.title');
 
-	const {data: diagramData, isFetching: isXmlFetching, isError: isXmlError} = useDiagramXml(selectedDefinitionKey);
+	const {
+		data: diagramData,
+		isFetching: isXmlFetching,
+		isError: isXmlError,
+		refetch: retryXml,
+	} = useDiagramXml(selectedDefinitionKey);
+	const isModificationMode = mode === 'batch-modification';
+	const {count: modificationCount} = useBatchModificationStatistics({
+		definitionKey: isModificationMode ? selectedDefinitionKey : undefined,
+		sourceElementId: isModificationMode ? elementId : undefined,
+		scope: isModificationMode ? modificationScope : undefined,
+	});
+	const modificationOverlays =
+		isModificationMode &&
+		elementId &&
+		selectedTargetElementId &&
+		modificationCount !== undefined &&
+		modificationCount > 0
+			? [
+					{type: 'batch-modification-source', elementId, position: {top: -14, right: -7}},
+					{type: 'batch-modification-target', elementId: selectedTargetElementId, position: {top: -14, right: -7}},
+				]
+			: [];
+	const moveTargets =
+		isModificationMode && !isXmlFetching && !isXmlError
+			? diagramData?.selectableElements.filter(
+					(id) => id !== elementId && isMoveTarget(diagramData.businessObjects[id]),
+				)
+			: undefined;
 
 	const statisticsFilter = getStatisticsFilter({active, incidents, completed, canceled, suspended});
 	const {data: overlaysData} = useDiagramStatisticsOverlays({
@@ -132,15 +183,75 @@ const DiagramPanel: React.FC<Props> = ({
 					<Diagram
 						key={selectedDefinitionKey}
 						xml={diagramData.xml}
-						selectedElementIds={elementId ? [elementId] : undefined}
-						onElementSelection={onElementSelection}
-						overlaysData={overlaysData}
-						selectableElements={diagramData.selectableElements}
+						selectedElementIds={
+							isModificationMode
+								? [elementId, selectedTargetElementId].filter((id): id is string => id !== undefined)
+								: elementId
+									? [elementId]
+									: undefined
+						}
+						onElementSelection={
+							isModificationMode
+								? (id) => {
+										if (id === undefined || moveTargets?.includes(id)) {
+											onTargetElementSelection?.(id);
+										}
+									}
+								: onElementSelection
+						}
+						overlaysData={[
+							...(isModificationMode
+								? (overlaysData?.filter(({payload}) => isStatisticsPayload(payload) && payload.count !== undefined) ??
+									[])
+								: (overlaysData ?? [])),
+							...modificationOverlays,
+						]}
+						selectableElements={moveTargets ?? diagramData.selectableElements}
 					>
-						<StatisticsOverlays />
+						<StatisticsOverlays modificationCount={modificationCount} />
 					</Diagram>
 				)}
 			</DiagramShell>
+			{isModificationMode && moveTargets && (
+				<Dropdown
+					id="batch-modification-target"
+					titleText={t('operate.processes.batchModification.targetLabel')}
+					label={t('operate.processes.batchModification.selectTarget')}
+					items={moveTargets}
+					itemToString={(id) => (id ? (diagramData?.businessObjects[id]?.name ?? id) : '')}
+					selectedItem={selectedTargetElementId ?? null}
+					onChange={({selectedItem}) => onTargetElementSelection?.(selectedItem ?? undefined)}
+					size="sm"
+				/>
+			)}
+			{isModificationMode && isXmlError && (
+				<Button kind="ghost" size="sm" onClick={() => void retryXml()}>
+					{t('operate.processes.batchModification.retryDiagram')}
+				</Button>
+			)}
+			{isModificationMode && (
+				<div>
+					<InlineNotification
+						hideCloseButton
+						lowContrast
+						kind="info"
+						title=""
+						subtitle={
+							selectedTargetElementId
+								? t('operate.processes.batchModification.targetScheduled', {
+										source: diagramData?.businessObjects[elementId ?? '']?.name ?? elementId,
+										target: diagramData?.businessObjects[selectedTargetElementId]?.name ?? selectedTargetElementId,
+									})
+								: t('operate.processes.batchModification.selectTarget')
+						}
+					/>
+					{selectedTargetElementId && (
+						<Button kind="ghost" size="sm" onClick={() => onTargetElementSelection?.(undefined)}>
+							{t('operate.processes.batchModification.undo')}
+						</Button>
+					)}
+				</div>
+			)}
 		</Section>
 	);
 };

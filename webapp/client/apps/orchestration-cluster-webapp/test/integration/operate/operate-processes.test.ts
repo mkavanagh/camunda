@@ -7,7 +7,7 @@
  */
 
 import {test, expect} from '#/pw-modules/test-extend';
-import {HttpResponse} from 'msw';
+import {HttpResponse, http} from 'msw';
 import {
 	mockCurrentUserEndpoint,
 	mockGetIncidentProcessInstanceStatisticsByErrorEndpoint,
@@ -20,6 +20,7 @@ import {
 	mockCreateCancellationBatchOperationEndpoint,
 	mockGetBatchOperationEndpoint,
 	mockGetProcessDefinitionXmlEndpoint,
+	mockGetProcessDefinitionStatisticsEndpoint,
 	mockGetProcessInstanceCallHierarchyEndpoint,
 	mockGetProcessInstanceEndpoint,
 	mockGetProcessInstanceWaitStateStatisticsEndpoint,
@@ -43,6 +44,11 @@ import {
 	createQueryBatchOperationItemsResponse,
 } from '#/shared-test-modules/api-mocks/batch-operations';
 import {createPaginatedResponse, createProblemDetails} from '#/shared-test-modules/api-mocks/shared';
+import {BPMN_XML} from '#/shared-test-modules/api-mocks/process-definition-xmls';
+import {
+	createGetProcessDefinitionStatisticsResponse,
+	createProcessDefinitionStatistic,
+} from '#/shared-test-modules/api-mocks/process-definition-statistics';
 
 const PROCESS_INSTANCE_XML =
 	'<definitions xmlns="http://www.omg.org/spec/BPMN/20100524/MODEL"><process id="order-process"><callActivity id="call-activity" /></process></definitions>';
@@ -113,6 +119,66 @@ test.beforeEach(({network}) => {
 });
 
 test.describe('Operate processes page', () => {
+	test('should move a selected process instance through the real route without clearing filters', async ({
+		network,
+		page,
+		operateProcessesPage,
+	}) => {
+		network.use(
+			mockQueryProcessDefinitionsEndpoint({
+				successResponse: HttpResponse.json(
+					createQueryProcessDefinitionsResponse({
+						items: [
+							createProcessDefinition({
+								processDefinitionId: 'my_simple_process',
+								processDefinitionKey: '123',
+								name: 'Invoice process',
+								version: 1,
+							}),
+						],
+					}),
+				),
+			}),
+			mockGetProcessDefinitionXmlEndpoint({successResponse: HttpResponse.text(BPMN_XML)}),
+			mockGetProcessDefinitionStatisticsEndpoint({
+				successResponse: HttpResponse.json(
+					createGetProcessDefinitionStatisticsResponse([
+						createProcessDefinitionStatistic({elementId: 'task-1', active: 1}),
+					]),
+				),
+			}),
+			http.post('*/v2/process-instances/modification', () =>
+				HttpResponse.json(
+					{batchOperationKey: 'batch-modification-1', batchOperationType: 'MODIFY_PROCESS_INSTANCE'},
+					{status: 202},
+				),
+			),
+			mockGetBatchOperationEndpoint({successResponse: HttpResponse.json(createBatchOperation())}),
+		);
+		await operateProcessesPage.goto('?process=my_simple_process&version=1&elementId=task-1');
+		await page.getByRole('checkbox', {name: 'Select instance 1001'}).check({force: true});
+		await operateProcessesPage.moveButton.click();
+		await page.getByRole('dialog').getByRole('button', {name: 'Continue'}).click();
+		await expect(page.getByRole('dialog', {name: 'Process instance batch move mode'})).not.toBeVisible();
+		await expect(page.getByTestId('frame-container').getByText('Batch Modification Mode', {exact: true})).toBeVisible();
+		await expect(operateProcessesPage.reviewModificationButton).toBeDisabled();
+		await operateProcessesPage.targetElement('end_event').click();
+		await expect(operateProcessesPage.reviewModificationButton).toBeEnabled();
+		await operateProcessesPage.reviewModificationButton.click();
+		await expect(page.getByRole('dialog')).toContainText('Invoice process');
+		const submitted = page.waitForRequest((request) => request.url().endsWith('/v2/process-instances/modification'));
+		await page.getByRole('dialog').getByRole('button', {name: 'Apply'}).click();
+
+		expect((await submitted).postDataJSON()).toMatchObject({
+			filter: {processDefinitionId: {$eq: 'my_simple_process'}, processInstanceKey: {$in: ['1001']}},
+			moveInstructions: [{sourceElementId: 'task-1', targetElementId: 'end_event'}],
+		});
+		await expect(
+			page.getByTestId('frame-container').getByText('Batch Modification Mode', {exact: true}),
+		).not.toBeVisible();
+		await expect(page).toHaveURL(/process=my_simple_process.*version=1.*elementId=task-1/);
+	});
+
 	test('should cancel all matching instances and discard selection after acceptance', async ({
 		network,
 		page,

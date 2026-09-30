@@ -9,33 +9,41 @@
 import {assign, fromPromise, setup} from 'xstate';
 import type {QueryClient} from '@tanstack/react-query';
 import {t} from 'i18next';
-import type {
-	BatchOperation,
-	CreateCancellationBatchOperationRequestBody,
-	CreateCancellationBatchOperationResponseBody,
-	CreateDeletionBatchOperationResponseBody,
-	CreateIncidentResolutionBatchOperationResponseBody,
-	SuspendProcessInstancesBatchOperationResponseBody,
-	ResumeProcessInstancesBatchOperationResponseBody,
+import {
+	endpoints as unifiedAPIEndpoints,
+	createModificationBatchOperationResponseBodySchema,
+	type BatchOperation,
+	type CreateCancellationBatchOperationRequestBody,
+	type CreateCancellationBatchOperationResponseBody,
+	type CreateDeletionBatchOperationResponseBody,
+	type CreateModificationBatchOperationRequestBody,
+	type CreateModificationBatchOperationResponseBody,
+	type CreateIncidentResolutionBatchOperationResponseBody,
+	type SuspendProcessInstancesBatchOperationResponseBody,
+	type ResumeProcessInstancesBatchOperationResponseBody,
 } from '@camunda/camunda-api-zod-schemas/8.11';
 import {endpoints} from '#/shared/http/endpoints';
 import {request, requestErrorSchema} from '#/shared/http/request';
 import {notificationsStore} from '#/shared/notifications/notifications.store';
 import {formatOperationType} from '#/operate/shared/utils/formatOperationType';
+import {getBootConfig} from '#/shared/config/getBootConfig';
+import {mergePathname} from '#/shared/http/mergePathname';
 import type {ProcessBulkAction} from './useProcessInstancesSelection';
 
 type Submission = {
 	type: 'submit';
-	action: ProcessBulkAction;
-	body: CreateCancellationBatchOperationRequestBody;
 	filterIdentity: string;
-};
+} & (
+	| {action: ProcessBulkAction; body: CreateCancellationBatchOperationRequestBody}
+	| {action: 'modify'; body: CreateModificationBatchOperationRequestBody}
+);
 type SubmissionResponse =
 	| CreateCancellationBatchOperationResponseBody
 	| CreateDeletionBatchOperationResponseBody
 	| CreateIncidentResolutionBatchOperationResponseBody
 	| SuspendProcessInstancesBatchOperationResponseBody
-	| ResumeProcessInstancesBatchOperationResponseBody;
+	| ResumeProcessInstancesBatchOperationResponseBody
+	| CreateModificationBatchOperationResponseBody;
 type TrackingInput = {queryClient: QueryClient; batchOperationKey: string};
 const REQUESTS = {
 	delete: endpoints.createDeletionBatchOperation,
@@ -123,22 +131,49 @@ const trackingMachine = setup({
 const processBulkOperationMachine = setup({
 	types: {
 		input: {} as {queryClient: QueryClient},
-		context: {} as {queryClient: QueryClient; acceptedIdentity: string | null; acceptedKey: string | null},
+		context: {} as {
+			queryClient: QueryClient;
+			acceptedIdentity: string | null;
+			acceptedKey: string | null;
+			acceptedAction: Submission['action'] | null;
+		},
 		events: {} as Submission,
 	},
 	actors: {
 		track: trackingMachine,
 		submit: fromPromise(async ({input}: {input: Submission}) => {
-			const {response, error} = await request(REQUESTS[input.action](input.body));
+			const inputRequest =
+				input.action === 'modify'
+					? new Request(
+							new URL(
+								mergePathname(
+									getBootConfig().contextPath,
+									unifiedAPIEndpoints.createModificationBatchOperation.getUrl(),
+								),
+								window.location.origin,
+							),
+							{
+								method: unifiedAPIEndpoints.createModificationBatchOperation.method,
+								credentials: 'include',
+								mode: 'cors',
+								body: JSON.stringify(input.body),
+								headers: {'Content-Type': 'application/json'},
+							},
+						)
+					: REQUESTS[input.action](input.body);
+			const {response, error} = await request(inputRequest);
 			if (error !== null) {
 				throw error;
 			}
-			const result: SubmissionResponse = await response.json();
-			return {...result, filterIdentity: input.filterIdentity};
+			const result: SubmissionResponse =
+				input.action === 'modify'
+					? createModificationBatchOperationResponseBodySchema.parse(await response.json())
+					: await response.json();
+			return {...result, filterIdentity: input.filterIdentity, action: input.action};
 		}),
 	},
 }).createMachine({
-	context: ({input}) => ({...input, acceptedIdentity: null, acceptedKey: null}),
+	context: ({input}) => ({...input, acceptedIdentity: null, acceptedKey: null, acceptedAction: null}),
 	initial: 'idle',
 	states: {
 		idle: {on: {submit: 'submitting'}},
@@ -159,7 +194,11 @@ const processBulkOperationMachine = setup({
 							}),
 							'success',
 						);
-						return {acceptedIdentity: filterIdentity, acceptedKey: batchOperationKey};
+						return {
+							acceptedIdentity: filterIdentity,
+							acceptedKey: batchOperationKey,
+							acceptedAction: event.output.action,
+						};
 					}),
 				},
 				onError: {

@@ -8,7 +8,7 @@
 
 import styled from 'styled-components';
 import {styles} from '@carbon/type';
-import {Link} from '@carbon/react';
+import {Link, Stack} from '@carbon/react';
 import {createLink} from '@tanstack/react-router';
 import {Error as BaseError} from '@carbon/react/icons';
 import {PanelHeader as BasePanelHeader} from '#/operate/shared/PanelHeader/PanelHeader';
@@ -61,6 +61,25 @@ const InstancesTableContainer = styled.section`
 	flex-direction: column;
 `;
 
+const BatchModificationActions = styled(Stack)`
+	justify-content: flex-end;
+	padding: var(--cds-spacing-04) var(--cds-spacing-05);
+	background-color: var(--cds-layer-01);
+	border-top: 1px solid var(--cds-border-subtle);
+`;
+
+const Badge = styled.span`
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	min-width: var(--cds-spacing-06);
+	height: var(--cds-spacing-06);
+	border-radius: var(--cds-spacing-05);
+	background: var(--cds-layer-01);
+	color: var(--cds-text-primary);
+	border: 1px solid var(--cds-border-strong-01);
+`;
+
 const ProcessName = styled.div`
 	display: flex;
 	align-items: center;
@@ -94,6 +113,8 @@ export {
 	DescriptionTitle,
 	DescriptionData,
 	InstancesTableContainer,
+	BatchModificationActions,
+	Badge,
 	ProcessName,
 	InstanceLink,
 	VisuallyHiddenStatus,

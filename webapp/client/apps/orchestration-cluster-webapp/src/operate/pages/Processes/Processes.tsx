@@ -15,7 +15,7 @@ import {Checkbox, ComboBox, Dropdown, Stack} from '@carbon/react';
 import {queries} from '#/shared/http/queries';
 import {getClientConfig} from '#/shared/config/getClientConfig';
 import {isSpecificTenant} from '#/operate/shared/utils/isSpecificTenant';
-import {ProcessesLayout} from './ProcessesLayout';
+import {ProcessesLayout, type ProcessesMode} from './ProcessesLayout';
 import {FiltersPanel} from '#/operate/shared/FiltersPanel/FiltersPanel';
 import {Title, Form as StyledForm} from '#/operate/shared/FiltersPanel/styled';
 import {AutoSubmit} from '#/operate/shared/AutoSubmit/AutoSubmit';
@@ -30,6 +30,7 @@ import {IndentedGroup, CanceledIcon} from './styled';
 import {OptionalFiltersFormGroup, type OptionalFilter, type OptionalFilterValues} from './OptionalFiltersFormGroup';
 import {DiagramPanel, type ProcessDefinitionSelection} from './DiagramPanel';
 import {InstancesTable} from './InstancesTable';
+import type {BatchModificationScope} from './useBatchModificationStatistics';
 
 type FiltersFormValues = OptionalFilterValues & {tenantId?: string};
 
@@ -81,6 +82,9 @@ const Processes: React.FC<Props> = ({
 		}),
 	);
 	const [visibleFilters, setVisibleFilters] = useState<OptionalFilter[]>([]);
+	const [mode, setMode] = useState<ProcessesMode>('list');
+	const [moveTarget, setMoveTarget] = useState<{source: string; definitionKey: string; target: string} | null>(null);
+	const [selectionScope, setSelectionScope] = useState<BatchModificationScope | null>(null);
 
 	const optionalFilterValues = useMemo<OptionalFilterValues>(
 		() => ({
@@ -151,6 +155,22 @@ const Processes: React.FC<Props> = ({
 		const definition = matches.find((def) => def.version === version);
 		return definition === undefined ? {kind: 'no-match'} : {kind: 'single-version', definition};
 	}, [data, process, version]);
+	const definitionKey =
+		processDefinitionSelection.kind === 'single-version'
+			? processDefinitionSelection.definition.processDefinitionKey
+			: undefined;
+	const isDefinitionAmbiguous =
+		getClientConfig().deployment.isMultiTenancyEnabled &&
+		!specificTenantId &&
+		process !== undefined &&
+		version !== undefined &&
+		(data.page.hasMoreTotalItems ||
+			data.items.filter((definition) => definition.processDefinitionId === process && definition.version === version)
+				.length > 1);
+	const selectedTargetElementId =
+		moveTarget !== null && moveTarget.source === elementId && moveTarget.definitionKey === definitionKey
+			? moveTarget.target
+			: undefined;
 
 	const runningChecked = active && incidents && suspended;
 	const runningIndeterminate = !runningChecked && (active || incidents || suspended);
@@ -201,6 +221,10 @@ const Processes: React.FC<Props> = ({
 	return (
 		<ProcessesLayout
 			type="process"
+			frame={{
+				isVisible: mode === 'batch-modification',
+				headerTitle: t('operate.processes.batchModification.frameTitle'),
+			}}
 			leftPanel={
 				<Form<FiltersFormValues> onSubmit={handleFiltersSubmit} initialValues={{tenantId, ...optionalFilterValues}}>
 					{({handleSubmit, form}) => (
@@ -395,6 +419,12 @@ const Processes: React.FC<Props> = ({
 				<DiagramPanel
 					processDefinitionSelection={processDefinitionSelection}
 					elementId={elementId}
+					mode={mode}
+					modificationScope={selectionScope ?? undefined}
+					selectedTargetElementId={selectedTargetElementId}
+					onTargetElementSelection={(target) =>
+						setMoveTarget(target && elementId && definitionKey ? {source: elementId, definitionKey, target} : null)
+					}
 					onElementSelection={(selectedElementId) => {
 						void navigate({
 							to: '.',
@@ -410,6 +440,16 @@ const Processes: React.FC<Props> = ({
 			}
 			bottomPanel={
 				<InstancesTable
+					mode={mode}
+					isDefinitionAmbiguous={isDefinitionAmbiguous}
+					processDefinitionSelection={processDefinitionSelection}
+					selectedTargetElementId={selectedTargetElementId}
+					onEnterMode={setMode}
+					onSelectionScopeChange={setSelectionScope}
+					onExitMode={() => {
+						setMoveTarget(null);
+						setMode('list');
+					}}
 					search={{
 						process,
 						version,

@@ -16,6 +16,8 @@ const Container = styled.main`
 	height: 100%;
 `;
 
+type ProcessesMode = 'list' | 'batch-modification' | 'migration';
+
 function ProcessesLayout(props: ComponentProps<typeof InstancesList>) {
 	const {t} = useTranslation();
 	return (
@@ -27,3 +29,4 @@ function ProcessesLayout(props: ComponentProps<typeof InstancesList>) {
 }
 
 export {ProcessesLayout};
+export type {ProcessesMode};

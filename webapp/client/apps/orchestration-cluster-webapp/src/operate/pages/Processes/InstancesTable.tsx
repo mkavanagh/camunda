@@ -6,7 +6,7 @@
  * except in compliance with the Camunda License 1.0.
  */
 
-import {useEffect, type ReactNode} from 'react';
+import {useEffect, useRef, type Dispatch, type ReactNode, type SetStateAction} from 'react';
 import {useMachine} from '@xstate/react';
 import {useTranslation} from 'react-i18next';
 import {useQuery, useQueryClient} from '@tanstack/react-query';
@@ -35,9 +35,22 @@ import {InstancesTableContainer, ProcessName, InstanceLink, VisuallyHiddenStatus
 import {useProcessInstancesSelection, type ProcessInstancesSelection} from './useProcessInstancesSelection';
 import {ProcessesToolbar} from './ProcessesToolbar';
 import {processBulkOperationMachine} from './processBulkOperationMachine';
+import {MoveAction} from './MoveAction';
+import {BatchModificationFooter} from './BatchModificationFooter';
+import {useDiagramXml} from './useDiagramXml';
+import type {ProcessDefinitionSelection} from './DiagramPanel';
+import type {ProcessesMode} from './ProcessesLayout';
+import type {BatchModificationScope} from './useBatchModificationStatistics';
 
 type Props = {
 	search: ProcessesSearch;
+	mode?: ProcessesMode;
+	isDefinitionAmbiguous?: boolean;
+	processDefinitionSelection?: ProcessDefinitionSelection;
+	selectedTargetElementId?: string;
+	onEnterMode?: (mode: ProcessesMode) => void;
+	onExitMode?: () => void;
+	onSelectionScopeChange?: Dispatch<SetStateAction<BatchModificationScope | null>>;
 	isActionMode?: boolean;
 	renderActions?: (selection: ProcessInstancesSelection) => ReactNode;
 };
@@ -76,7 +89,18 @@ function getActiveOperationsByInstance(items: BatchOperationItem[]) {
 	}, new Map<string, BatchOperationType[]>());
 }
 
-const InstancesTable: React.FC<Props> = ({search, isActionMode, renderActions}) => {
+const InstancesTable: React.FC<Props> = ({
+	search,
+	mode = 'list',
+	isDefinitionAmbiguous = false,
+	processDefinitionSelection,
+	selectedTargetElementId,
+	onEnterMode,
+	onExitMode,
+	onSelectionScopeChange,
+	isActionMode,
+	renderActions,
+}) => {
 	const {t} = useTranslation();
 	const {
 		processInstances,
@@ -91,17 +115,44 @@ const InstancesTable: React.FC<Props> = ({search, isActionMode, renderActions}) 
 		isFetchingNextPage,
 		hasNextPage,
 		fetchNextPage,
-	} = useProcessInstancesSearch(search);
+	} = useProcessInstancesSearch(search, mode !== 'batch-modification');
 	const selection = useProcessInstancesSelection(search, processInstances, totalCount, hasMoreTotalItems);
 	const [operation, send] = useMachine(processBulkOperationMachine, {input: {queryClient: useQueryClient()}});
 	const isSubmitting = operation.matches('submitting');
-	const {acceptedKey, acceptedIdentity} = operation.context;
+	const {acceptedKey, acceptedIdentity, acceptedAction} = operation.context;
 	const {reset, filterIdentity} = selection;
+	const scopeIdentity = JSON.stringify({
+		filter: selection.getRequest('cancel').filter,
+		selectedCount: selection.selectedCount,
+	});
 	useEffect(() => {
-		if (acceptedKey !== null && acceptedIdentity === filterIdentity) {
+		onSelectionScopeChange?.((previous) =>
+			previous !== null && JSON.stringify(previous) === scopeIdentity
+				? previous
+				: {
+						filter: selection.getRequest('cancel').filter,
+						selectedCount: selection.selectedCount,
+					},
+		);
+	}, [selection, filterIdentity, scopeIdentity, onSelectionScopeChange]);
+	const lastHandledOperation = useRef<string | null>(null);
+	useEffect(() => {
+		if (acceptedKey === null || acceptedKey === lastHandledOperation.current) {
+			return;
+		}
+		lastHandledOperation.current = acceptedKey;
+		if (acceptedIdentity === filterIdentity) {
 			reset();
 		}
-	}, [acceptedKey, acceptedIdentity, filterIdentity, reset]);
+		if (acceptedAction === 'modify') {
+			onExitMode?.();
+		}
+	}, [acceptedKey, acceptedIdentity, acceptedAction, filterIdentity, reset, onExitMode]);
+	const definitionKey =
+		processDefinitionSelection?.kind === 'single-version'
+			? processDefinitionSelection.definition.processDefinitionKey
+			: undefined;
+	const {data: diagramData} = useDiagramXml(definitionKey);
 	const canSelect = status === 'success' && !isPlaceholderData && !isSubmitting;
 
 	// The operation-state column only exists while the list is filtered by a batch operation —
@@ -299,8 +350,22 @@ const InstancesTable: React.FC<Props> = ({search, isActionMode, renderActions}) 
 					key={filterIdentity}
 					selection={selection}
 					isSubmitting={isSubmitting}
-					isActionMode={isActionMode}
-					additionalActions={renderActions?.(selection)}
+					isActionMode={isActionMode || mode !== 'list'}
+					additionalActions={
+						<>
+							{processDefinitionSelection && onEnterMode && (
+								<MoveAction
+									mode={mode}
+									isDefinitionAmbiguous={isDefinitionAmbiguous}
+									selection={selection}
+									processDefinitionSelection={processDefinitionSelection}
+									sourceElementId={search.elementId}
+									onEnter={() => onEnterMode('batch-modification')}
+								/>
+							)}
+							{renderActions?.(selection)}
+						</>
+					}
 					onSubmit={(action) =>
 						send({type: 'submit', action, body: selection.getRequest(action), filterIdentity: selection.filterIdentity})
 					}
@@ -347,6 +412,41 @@ const InstancesTable: React.FC<Props> = ({search, isActionMode, renderActions}) 
 						fetchNextPage,
 					}}
 					data-testid="process-instances-table"
+				/>
+			)}
+			{mode === 'batch-modification' && processDefinitionSelection && onExitMode && (
+				<BatchModificationFooter
+					selection={selection}
+					processDefinitionSelection={processDefinitionSelection}
+					sourceElementId={search.elementId}
+					targetElementId={selectedTargetElementId}
+					sourceName={diagramData?.businessObjects[search.elementId ?? '']?.name}
+					targetName={diagramData?.businessObjects[selectedTargetElementId ?? '']?.name}
+					isSubmitting={isSubmitting}
+					isDefinitionAmbiguous={isDefinitionAmbiguous}
+					onExit={() => {
+						selection.reset();
+						onExitMode();
+					}}
+					onSubmit={() => {
+						if (
+							search.elementId &&
+							selectedTargetElementId &&
+							selection.selectedCount > 0 &&
+							selection.eligibility.cancel &&
+							!isDefinitionAmbiguous
+						) {
+							send({
+								type: 'submit',
+								action: 'modify',
+								body: {
+									...selection.getRequest('cancel'),
+									moveInstructions: [{sourceElementId: search.elementId, targetElementId: selectedTargetElementId}],
+								},
+								filterIdentity,
+							});
+						}
+					}}
 				/>
 			)}
 		</InstancesTableContainer>
