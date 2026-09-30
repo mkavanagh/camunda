@@ -17,11 +17,25 @@ type ExpandableListRow = {
 	incidentsCount: number;
 };
 
+// Resolved (translated) copy and a stable test id for one of the two "load
+// more"/"load previous" skeleton-row indicators a variant renders inline in
+// its table body while a page is being fetched. Resolved once in
+// `ExpandableList` (which already owns the `useTranslation` call) rather than
+// in every variant.
+type ExpandableListLoadingIndicator = {
+	testId: string;
+	label: string;
+};
+
 type ExpandableListVariantProps = {
 	header: string;
 	rows: ExpandableListRow[];
 	renderExpansion: (row: ExpandableListRow) => React.ReactNode;
 	isPending: boolean;
+	isFetchingNextPage: boolean;
+	isFetchingPreviousPage: boolean;
+	loadingNextPage: ExpandableListLoadingIndicator;
+	loadingPreviousPage: ExpandableListLoadingIndicator;
 };
 
 type ExpandableListVariantComponent = React.FC<ExpandableListVariantProps>;

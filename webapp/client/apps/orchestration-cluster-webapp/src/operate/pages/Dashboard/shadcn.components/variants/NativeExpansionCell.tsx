@@ -10,15 +10,36 @@ import {useState} from 'react';
 import {Button, DataTable, useC4Dictionary, type DataTableColumn} from '@camunda/design-system';
 import {ChevronDown, ChevronRight} from '@camunda/design-system/icons';
 import {cn} from '#/shared/cn';
+import {ExpandableListSkeletonRow} from '../ExpandableListSkeletonRow';
 import type {ExpandableListRow, ExpandableListVariantProps} from '../ExpandableList.types';
 
-type DisplayRow = {kind: 'row'; row: ExpandableListRow} | {kind: 'detail'; parentId: string; content: React.ReactNode};
+type DisplayRow =
+	| {kind: 'row'; row: ExpandableListRow}
+	| {kind: 'detail'; parentId: string; content: React.ReactNode}
+	| {kind: 'skeleton'; id: string; testId: string; label: string};
 
 function getDisplayRowId(displayRow: DisplayRow): string {
-	return displayRow.kind === 'row' ? `row-${displayRow.row.id}` : `detail-${displayRow.parentId}`;
+	if (displayRow.kind === 'row') {
+		return `row-${displayRow.row.id}`;
+	}
+
+	if (displayRow.kind === 'detail') {
+		return `detail-${displayRow.parentId}`;
+	}
+
+	return displayRow.id;
 }
 
-const NativeExpansionCell: React.FC<ExpandableListVariantProps> = ({header, rows, renderExpansion, isPending}) => {
+const NativeExpansionCell: React.FC<ExpandableListVariantProps> = ({
+	header,
+	rows,
+	renderExpansion,
+	isPending,
+	isFetchingNextPage,
+	isFetchingPreviousPage,
+	loadingNextPage,
+	loadingPreviousPage,
+}) => {
 	const {t} = useC4Dictionary();
 	const [expandedIds, setExpandedIds] = useState<ReadonlySet<string>>(new Set());
 
@@ -35,6 +56,16 @@ const NativeExpansionCell: React.FC<ExpandableListVariantProps> = ({header, rows
 	};
 
 	const displayRows: DisplayRow[] = [];
+
+	if (isFetchingPreviousPage) {
+		displayRows.push({
+			kind: 'skeleton',
+			id: '__skeleton-previous',
+			testId: loadingPreviousPage.testId,
+			label: loadingPreviousPage.label,
+		});
+	}
+
 	for (const row of rows) {
 		displayRows.push({kind: 'row', row});
 
@@ -44,6 +75,15 @@ const NativeExpansionCell: React.FC<ExpandableListVariantProps> = ({header, rows
 				displayRows.push({kind: 'detail', parentId: row.id, content});
 			}
 		}
+	}
+
+	if (isFetchingNextPage) {
+		displayRows.push({
+			kind: 'skeleton',
+			id: '__skeleton-next',
+			testId: loadingNextPage.testId,
+			label: loadingNextPage.label,
+		});
 	}
 
 	const columns: DataTableColumn<DisplayRow>[] = [
@@ -59,6 +99,10 @@ const NativeExpansionCell: React.FC<ExpandableListVariantProps> = ({header, rows
 							{data.content}
 						</div>
 					);
+				}
+
+				if (data.kind === 'skeleton') {
+					return <ExpandableListSkeletonRow testId={data.testId} label={data.label} />;
 				}
 
 				const isExpanded = expandedIds.has(data.row.id);
@@ -98,6 +142,13 @@ const NativeExpansionCell: React.FC<ExpandableListVariantProps> = ({header, rows
 				// gives the sole column a stable 100%-of-table width to truncate
 				// against instead.
 				'[&_[data-slot=table]]:table-fixed',
+				// See `ComposedCell` for why the sticky header needs the table's
+				// own scroll container's `overflow-y-hidden` cleared first, and
+				// why its own rounded-card border/background is stripped here
+				// (that chrome now lives on `ExpandableList`'s outer container).
+				'[&_[data-slot=table-container]]:overflow-visible!',
+				'[&_[data-slot=table-container]]:rounded-none! [&_[data-slot=table-container]]:border-0! [&_[data-slot=table-container]]:shadow-none!',
+				'[&_[data-slot=table-header]]:sticky [&_[data-slot=table-header]]:top-0 [&_[data-slot=table-header]]:z-10',
 			)}
 		>
 			<DataTable<DisplayRow>
