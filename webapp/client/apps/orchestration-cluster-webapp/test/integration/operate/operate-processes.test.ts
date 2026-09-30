@@ -20,6 +20,7 @@ import {
 	mockCreateCancellationBatchOperationEndpoint,
 	mockGetBatchOperationEndpoint,
 	mockGetProcessDefinitionXmlEndpoint,
+	mockGetProcessDefinitionStatisticsEndpoint,
 	mockGetProcessInstanceCallHierarchyEndpoint,
 	mockGetProcessInstanceEndpoint,
 	mockGetProcessInstanceWaitStateStatisticsEndpoint,
@@ -43,6 +44,8 @@ import {
 	createQueryBatchOperationItemsResponse,
 } from '#/shared-test-modules/api-mocks/batch-operations';
 import {createPaginatedResponse, createProblemDetails} from '#/shared-test-modules/api-mocks/shared';
+import {createGetProcessDefinitionStatisticsResponse} from '#/shared-test-modules/api-mocks/process-definition-statistics';
+import {BPMN_XML} from '#/shared-test-modules/api-mocks/process-definition-xmls';
 
 const PROCESS_INSTANCE_XML =
 	'<definitions xmlns="http://www.omg.org/spec/BPMN/20100524/MODEL"><process id="order-process"><callActivity id="call-activity" /></process></definitions>';
@@ -155,6 +158,93 @@ test.describe('Operate processes page', () => {
 
 		await expect(operateProcessesPage.filtersPanel).toBeVisible();
 		await expect(operateProcessesPage.processCombobox).toBeVisible();
+	});
+
+	test('should synchronize the element combobox and diagram with URL history and instance requests', async ({
+		network,
+		page,
+		operateProcessesPage,
+	}) => {
+		network.use(
+			mockGetProcessDefinitionXmlEndpoint({successResponse: HttpResponse.text(BPMN_XML)}),
+			mockGetProcessDefinitionStatisticsEndpoint({
+				successResponse: HttpResponse.json(createGetProcessDefinitionStatisticsResponse([])),
+			}),
+		);
+		await operateProcessesPage.goto('?process=order-process&version=1');
+		await expect(operateProcessesPage.elementCombobox).toBeEnabled();
+
+		const selectedRequest = page.waitForRequest(
+			(request) =>
+				request.method() === 'POST' &&
+				request.url().endsWith('/v2/process-instances/search') &&
+				JSON.stringify(request.postDataJSON()).includes('"elementId"'),
+		);
+		await operateProcessesPage.elementCombobox.fill('Review invoice');
+		await operateProcessesPage.elementCombobox.press('Enter');
+		expect((await selectedRequest).postDataJSON().filter).toEqual(
+			expect.objectContaining({
+				processDefinitionId: {$eq: 'order-process'},
+				processDefinitionVersion: 1,
+				elementId: {$eq: 'task-1'},
+				elementInstanceState: {$eq: 'ACTIVE'},
+			}),
+		);
+		await expect(operateProcessesPage.elementCombobox).toHaveValue('Review invoice');
+		await expect(operateProcessesPage.diagramElement('task-1')).toHaveClass(/op-selected/);
+		expect(new URL(page.url()).searchParams.get('elementId')).toBe('task-1');
+
+		await page.reload();
+		await expect(operateProcessesPage.elementCombobox).toHaveValue('Review invoice');
+		await expect(operateProcessesPage.diagramElement('task-1')).toHaveClass(/op-selected/);
+		await operateProcessesPage.diagramElement('end_event').click();
+		await expect(operateProcessesPage.elementCombobox).toHaveValue('end_event');
+		await expect(operateProcessesPage.diagramElement('end_event')).toHaveClass(/op-selected/);
+		await page.goBack();
+		await expect(operateProcessesPage.elementCombobox).toHaveValue('Review invoice');
+		await page.goForward();
+		await expect(operateProcessesPage.elementCombobox).toHaveValue('end_event');
+
+		await page.getByRole('button', {name: 'Clear selected item'}).last().click();
+		await expect(operateProcessesPage.elementCombobox).toHaveValue('');
+		await expect.poll(() => new URL(page.url()).searchParams.get('elementId')).toBeNull();
+	});
+
+	test('should keep a bookmarked element filter clearable when XML fails without hiding instances', async ({
+		network,
+		page,
+		operateProcessesPage,
+	}) => {
+		network.use(mockGetProcessDefinitionXmlEndpoint({successResponse: new HttpResponse(null, {status: 503})}));
+		await operateProcessesPage.goto('?process=order-process&version=1&elementId=task-1');
+		await expect(operateProcessesPage.instancesTable).toBeVisible();
+		await expect(operateProcessesPage.elementCombobox).toHaveValue('task-1');
+		await expect(operateProcessesPage.filtersPanel.getByRole('button', {name: 'Retry loading elements'})).toBeVisible({
+			timeout: 15000,
+		});
+		await operateProcessesPage.filtersPanel.getByRole('button', {name: 'Clear element filter'}).click();
+		await expect.poll(() => new URL(page.url()).searchParams.get('elementId')).toBeNull();
+		await expect(operateProcessesPage.instancesTable).toBeVisible();
+	});
+
+	test('should clear the element and diagram selection when the process version changes', async ({
+		network,
+		page,
+		operateProcessesPage,
+	}) => {
+		network.use(
+			mockGetProcessDefinitionXmlEndpoint({successResponse: HttpResponse.text(BPMN_XML)}),
+			mockGetProcessDefinitionStatisticsEndpoint({
+				successResponse: HttpResponse.json(createGetProcessDefinitionStatisticsResponse([])),
+			}),
+		);
+		await operateProcessesPage.goto('?process=order-process&version=1&elementId=task-1');
+		await expect(operateProcessesPage.diagramElement('task-1')).toHaveClass(/op-selected/);
+		await operateProcessesPage.versionCombobox.click();
+		await page.getByRole('option', {name: 'All versions'}).click();
+		await expect.poll(() => new URL(page.url()).searchParams.get('elementId')).toBeNull();
+		await expect(operateProcessesPage.elementCombobox).toBeDisabled();
+		await expect(page.getByText('There is more than one Version selected for Process "Order Process"')).toBeVisible();
 	});
 
 	test('should render the reset filters button disabled by default', async ({operateProcessesPage}) => {

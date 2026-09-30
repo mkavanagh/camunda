@@ -23,7 +23,8 @@ import {Section} from './styled';
 type ProcessDefinitionSelection =
 	| {kind: 'no-match'}
 	| {kind: 'single-version'; definition: ProcessDefinition}
-	| {kind: 'all-versions'; definition: Pick<ProcessDefinition, 'name' | 'processDefinitionId'>};
+	| {kind: 'all-versions'; definition: Pick<ProcessDefinition, 'name' | 'processDefinitionId'>}
+	| {kind: 'multiple-tenants'; definition: Pick<ProcessDefinition, 'name' | 'processDefinitionId'>};
 
 function isStatisticsPayload(
 	payload: unknown,
@@ -120,12 +121,17 @@ const DiagramPanel: React.FC<Props> = ({
 								message: t('operate.processes.diagramPanel.multipleVersionsSelected', {name: selectedDefinitionName}),
 								additionalInfo: t('operate.processes.diagramPanel.selectSingleVersion'),
 							}
-						: processDefinitionSelection.kind === 'single-version'
-							? {message: t('operate.processInstance.diagram.noDiagram')}
-							: {
-									message: t('operate.processes.diagramPanel.noProcessSelected'),
-									additionalInfo: t('operate.processes.diagramPanel.selectProcessInFilters'),
+						: processDefinitionSelection.kind === 'multiple-tenants'
+							? {
+									message: t('operate.processes.diagramPanel.multipleTenantsSelected', {name: selectedDefinitionName}),
+									additionalInfo: t('operate.processes.diagramPanel.selectSingleTenant'),
 								}
+							: processDefinitionSelection.kind === 'single-version'
+								? {message: t('operate.processInstance.diagram.noDiagram')}
+								: {
+										message: t('operate.processes.diagramPanel.noProcessSelected'),
+										additionalInfo: t('operate.processes.diagramPanel.selectProcessInFilters'),
+									}
 				}
 			>
 				{diagramData?.xml && (
