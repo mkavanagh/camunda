@@ -17,12 +17,6 @@ import type {
 import {request} from '#/shared/http/request';
 import {mapQueryError} from '#/shared/http/mapQueryError';
 import {endpoints} from '#/shared/http/endpoints';
-import {
-	INITIAL_PAGE_CURSOR,
-	cursorPageRequest,
-	getNextCursorPageParam,
-	getPreviousCursorPageParam,
-} from '#/shared/http/cursorPagination';
 
 const PAGE_SIZE = 50;
 const MAX_PAGES = 5;
@@ -78,6 +72,10 @@ const DEFAULT_SORT: Pick<GetProcessDefinitionInstanceStatisticsRequestBody, 'sor
 	],
 };
 
+// This endpoint only supports offset pagination (`from`/`limit`), not the
+// cursor-based `after`/`before` style other search endpoints use — its
+// `startCursor`/`endCursor` are always null, so `getNextPageParam` derives
+// the next page directly from the offset and `totalItems` instead.
 const instancesByProcessInfiniteQuery = () =>
 	infiniteQueryOptions({
 		queryKey: ['instancesByProcess'] as const,
@@ -85,7 +83,7 @@ const instancesByProcessInfiniteQuery = () =>
 			const {response, error} = await request(
 				endpoints.getProcessDefinitionInstanceStatistics({
 					...DEFAULT_SORT,
-					page: cursorPageRequest(pageParam, PAGE_SIZE),
+					page: {from: pageParam, limit: PAGE_SIZE},
 				}),
 			);
 			if (error !== null) {
@@ -93,9 +91,13 @@ const instancesByProcessInfiniteQuery = () =>
 			}
 			return response.json();
 		},
-		initialPageParam: INITIAL_PAGE_CURSOR,
-		getNextPageParam: (lastPage) => getNextCursorPageParam(lastPage.page),
-		getPreviousPageParam: (firstPage) => getPreviousCursorPageParam(firstPage.page),
+		initialPageParam: 0,
+		getNextPageParam: (lastPage, _allPages, lastPageParam) => {
+			const nextOffset = lastPageParam + lastPage.items.length;
+			return nextOffset < lastPage.page.totalItems ? nextOffset : undefined;
+		},
+		getPreviousPageParam: (_firstPage, _allPages, firstPageParam) =>
+			firstPageParam > 0 ? Math.max(0, firstPageParam - PAGE_SIZE) : undefined,
 		maxPages: MAX_PAGES,
 	});
 

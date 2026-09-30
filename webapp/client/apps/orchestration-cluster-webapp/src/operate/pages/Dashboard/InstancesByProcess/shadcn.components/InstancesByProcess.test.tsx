@@ -37,8 +37,7 @@ const REQUEST_SCHEMA = z.object({
 	),
 	page: z.object({
 		limit: z.literal(50),
-		after: z.string().optional(),
-		before: z.string().optional(),
+		from: z.number().optional(),
 	}),
 });
 const FAILURE_RESPONSE = new HttpResponse(null, {status: 400});
