@@ -552,44 +552,67 @@ describe('<InstancesTable />', () => {
 			.toMatchTextContent(/Incident A failed\s+Incident B failed\s+Operation failed/);
 	});
 
-	it.for([1, 50])('should find a failed item beyond a page of %s operation items', async (pageSize, {worker}) => {
-		worker.use(
-			mockQueryProcessInstancesEndpoint({
-				successResponse: HttpResponse.json(
-					createQueryProcessInstancesResponse({items: [createProcessInstance({processInstanceKey: '1'})]}),
-				),
-			}),
-			mockQueryBatchOperationItemsEndpoint({
-				schema: z.object({page: z.object({after: z.undefined().optional()})}),
-				successResponse: HttpResponse.json(
-					createQueryBatchOperationItemsResponse({
-						items: Array.from({length: pageSize}, (_, index) =>
-							createBatchOperationItem({itemKey: `item-${index}`, processInstanceKey: '1', state: 'COMPLETED'}),
+	it.for([1, 50, 10_000])(
+		'should find a failed item beyond a page of %s operation items',
+		async (pageSize, {worker}) => {
+			const requestedPages: {limit: number; after?: string}[] = [];
+			worker.events.on('request:start', async ({request}) => {
+				if (!request.url.endsWith('/batch-operation-items/search')) {
+					return;
+				}
+				const payload = z
+					.object({
+						filter: z.object({batchOperationKey: z.object({$eq: z.string()})}),
+						page: z.object({limit: z.number(), after: z.string().optional()}),
+					})
+					.safeParse(await request.clone().json());
+				if (payload.success) {
+					requestedPages.push(payload.data.page);
+				}
+			});
+			try {
+				worker.use(
+					mockQueryProcessInstancesEndpoint({
+						successResponse: HttpResponse.json(
+							createQueryProcessInstancesResponse({items: [createProcessInstance({processInstanceKey: '1'})]}),
 						),
-						page: {totalItems: pageSize + 1, endCursor: 'next-page'},
 					}),
-				),
-				failureResponse: HttpResponse.json(
-					createQueryBatchOperationItemsResponse({
-						items: [
-							createBatchOperationItem({
-								itemKey: `item-${pageSize}`,
-								processInstanceKey: '1',
-								state: 'FAILED',
-								errorMessage: 'Late failure',
+					mockQueryBatchOperationItemsEndpoint({
+						schema: z.object({page: z.object({after: z.undefined().optional(), limit: z.literal(10_000)})}),
+						successResponse: HttpResponse.json(
+							createQueryBatchOperationItemsResponse({
+								items: Array.from({length: pageSize}, (_, index) =>
+									createBatchOperationItem({itemKey: `item-${index}`, processInstanceKey: '1', state: 'COMPLETED'}),
+								),
+								page: {totalItems: pageSize + 1, endCursor: 'next-page'},
 							}),
-						],
-						page: {totalItems: pageSize + 1},
+						),
+						failureResponse: HttpResponse.json(
+							createQueryBatchOperationItemsResponse({
+								items: [
+									createBatchOperationItem({
+										itemKey: `item-${pageSize}`,
+										processInstanceKey: '1',
+										state: 'FAILED',
+										errorMessage: 'Late failure',
+									}),
+								],
+								page: {totalItems: pageSize + 1},
+							}),
+						),
 					}),
-				),
-			}),
-		);
-		const screen = await renderInstancesTable({...BASE_SEARCH, batchOperationKey: 'batch-op-1'});
+				);
+				const screen = await renderInstancesTable({...BASE_SEARCH, batchOperationKey: 'batch-op-1'});
 
-		await expect.element(screen.getByText('FAILED, COMPLETED')).toBeVisible();
-		await userEvent.click(screen.getByRole('button', {name: 'Show failure details for instance 1'}));
-		await expect.element(screen.getByText('Late failure')).toBeVisible();
-	});
+				await expect.element(screen.getByText('FAILED, COMPLETED')).toBeVisible();
+				await userEvent.click(screen.getByRole('button', {name: 'Show failure details for instance 1'}));
+				await expect.element(screen.getByText('Late failure')).toBeVisible();
+				await expect.poll(() => requestedPages).toEqual([{limit: 10_000}, {limit: 10_000, after: 'next-page'}]);
+			} finally {
+				worker.events.removeAllListeners('request:start');
+			}
+		},
+	);
 
 	it('should finish when the cursor ends even if the total count is only a lower bound', async ({worker}) => {
 		worker.use(
@@ -620,7 +643,7 @@ describe('<InstancesTable />', () => {
 		await expect.element(screen.getByText('Failed')).toBeVisible();
 	});
 
-	it('should not request another page after a full page with an exact total', async ({worker}) => {
+	it('should not request another page when the reported total is exact', async ({worker}) => {
 		worker.use(
 			mockQueryProcessInstancesEndpoint({
 				successResponse: HttpResponse.json(

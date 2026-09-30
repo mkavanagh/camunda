@@ -16,7 +16,7 @@ import {request} from '#/shared/http/request';
 import {mapQueryError} from '#/shared/http/mapQueryError';
 import {endpoints} from '#/shared/http/endpoints';
 
-const PAGE_LIMIT = 50;
+const PAGE_LIMIT = 10_000;
 
 async function fetchBatchOperationItems(
 	body: QueryBatchOperationItemsRequestBody,
