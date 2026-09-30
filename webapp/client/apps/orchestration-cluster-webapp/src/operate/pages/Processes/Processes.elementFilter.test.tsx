@@ -6,7 +6,7 @@
  * except in compliance with the Camunda License 1.0.
  */
 
-import {afterEach, beforeEach, describe, expect} from 'vitest';
+import {afterEach, beforeEach, describe, expect, vi} from 'vitest';
 import {HttpResponse} from 'msw';
 import {userEvent} from 'vitest/browser';
 import {z} from 'zod';
@@ -41,21 +41,37 @@ const DEFINITIONS = HttpResponse.json(
 const EMPTY_INSTANCES = HttpResponse.json(createQueryProcessInstancesResponse());
 const EMPTY_STATISTICS = HttpResponse.json(createGetProcessDefinitionStatisticsResponse([]));
 const INVALID_REQUEST = new HttpResponse(null, {status: 400});
+const mountedScreens: Awaited<ReturnType<typeof renderWithRouter>>[] = [];
 
-function renderPage(search = '') {
-	return renderWithRouter(ProcessesHarness, {
+async function renderPage(search = '') {
+	const screen = await renderWithRouter(ProcessesHarness, {
 		path: '/operate/processes',
 		initialEntry: `/operate/processes${search}`,
 	});
+	mountedScreens.push(screen);
+	return screen;
 }
 
 describe('Processes element filter', () => {
+	let clientConfig = createSystemConfiguration();
+	let restoreGetItem: () => void;
+
 	beforeEach(() => {
-		sessionStorage.setItem('clientConfig', JSON.stringify(createSystemConfiguration()));
+		clientConfig = createSystemConfiguration();
+		const originalGetItem = sessionStorage.getItem.bind(sessionStorage);
+		const getItemSpy = vi
+			.spyOn(sessionStorage, 'getItem')
+			.mockImplementation((key) => (key === 'clientConfig' ? JSON.stringify(clientConfig) : originalGetItem(key)));
+		restoreGetItem = () => getItemSpy.mockRestore();
 	});
 
-	afterEach(() => {
-		sessionStorage.clear();
+	afterEach(async () => {
+		for (const screen of mountedScreens) {
+			await screen.unmount();
+			await screen.queryClient.cancelQueries();
+		}
+		mountedScreens.length = 0;
+		restoreGetItem();
 	});
 
 	it('should offer only sorted flow nodes, with their names or IDs, for a selected version', async ({worker}) => {
@@ -230,68 +246,65 @@ describe('Processes element filter', () => {
 		},
 	);
 
-	it('should not use another tenant XML when the same process and version occur in multiple tenants', async ({
-		worker,
-	}) => {
-		sessionStorage.setItem(
-			'clientConfig',
-			JSON.stringify(
-				createSystemConfiguration({
-					deployment: {isMultiTenancyEnabled: true, isTenantsApiEnabled: true, maxRequestSize: 0},
+	it.for([{otherTenantVersion: 1}, {otherTenantVersion: 2}])(
+		'should not use another tenant XML when a process ID exists in different tenants at version $otherTenantVersion',
+		async ({otherTenantVersion}, {worker}) => {
+			clientConfig = createSystemConfiguration({
+				deployment: {isMultiTenancyEnabled: true, isTenantsApiEnabled: true, maxRequestSize: 0},
+			});
+			worker.use(
+				mockCurrentUserEndpoint({
+					successResponse: HttpResponse.json(
+						createCurrentUser({
+							tenants: [
+								{tenantId: '<tenant-A>', name: 'Tenant A', description: null},
+								{tenantId: '<tenant-B>', name: 'Tenant B', description: null},
+							],
+						}),
+					),
 				}),
-			),
-		);
-		worker.use(
-			mockCurrentUserEndpoint({
-				successResponse: HttpResponse.json(
-					createCurrentUser({
-						tenants: [
-							{tenantId: '<tenant-A>', name: 'Tenant A', description: null},
-							{tenantId: '<tenant-B>', name: 'Tenant B', description: null},
-						],
-					}),
-				),
-			}),
-			mockQueryProcessDefinitionsEndpoint({
-				successResponse: HttpResponse.json(
-					createQueryProcessDefinitionsResponse({
-						items: [
-							createProcessDefinition({
-								name: 'Orders',
-								processDefinitionId: 'orders',
-								version: 1,
-								tenantId: '<tenant-A>',
-								processDefinitionKey: '1001',
-							}),
-							createProcessDefinition({
-								name: 'Orders',
-								processDefinitionId: 'orders',
-								version: 1,
-								tenantId: '<tenant-B>',
-								processDefinitionKey: '2002',
-							}),
-						],
-					}),
-				),
-			}),
-			mockQueryProcessInstancesEndpoint({successResponse: EMPTY_INSTANCES}),
-		);
+				mockQueryProcessDefinitionsEndpoint({
+					successResponse: HttpResponse.json(
+						createQueryProcessDefinitionsResponse({
+							items: [
+								createProcessDefinition({
+									name: 'Orders',
+									processDefinitionId: 'orders',
+									version: 1,
+									tenantId: '<tenant-A>',
+									processDefinitionKey: '1001',
+								}),
+								createProcessDefinition({
+									name: 'Orders',
+									processDefinitionId: 'orders',
+									version: otherTenantVersion,
+									tenantId: '<tenant-B>',
+									processDefinitionKey: '2002',
+								}),
+							],
+						}),
+					),
+				}),
+				mockQueryProcessInstancesEndpoint({successResponse: EMPTY_INSTANCES}),
+			);
 
-		const screen = await renderPage('?tenantId=all&process=orders&version=1');
-		await expect.element(screen.getByText('Process "Orders" exists in more than one Tenant')).toBeVisible();
-		await expect.element(screen.getByRole('combobox', {name: 'Element'})).toBeDisabled();
-		await expect.element(screen.getByText('There are no Instances matching this filter set')).toBeVisible();
-	});
+			const screen = await renderPage('?tenantId=all&process=orders&version=1');
+			await expect.element(screen.getByText('Process "Orders" exists in more than one Tenant')).toBeVisible();
+			await expect.element(screen.getByRole('combobox', {name: 'Element'})).toBeDisabled();
+			await expect.element(screen.getByText('There are no Instances matching this filter set')).toBeVisible();
+			screen.router.history.push('/operate/processes?tenantId=all&process=orders');
+			await expect.element(screen.getByRole('combobox', {name: 'Version'})).toMatchTextContent('All versions');
+			await expect.element(screen.getByText('Process "Orders" exists in more than one Tenant')).toBeVisible();
+			await expect.element(screen.getByRole('combobox', {name: 'Element'})).toBeDisabled();
+			screen.router.history.push('/operate/processes?tenantId=all&process=orders&version=3');
+			await expect.element(screen.getByText('There is no Process selected')).toBeVisible();
+		},
+	);
 
 	it('should offer elements from a tenant-scoped definition', async ({worker}) => {
-		sessionStorage.setItem(
-			'clientConfig',
-			JSON.stringify(
-				createSystemConfiguration({
-					deployment: {isMultiTenancyEnabled: true, isTenantsApiEnabled: true, maxRequestSize: 0},
-				}),
-			),
-		);
+		clientConfig = createSystemConfiguration({
+			deployment: {isMultiTenancyEnabled: true, isTenantsApiEnabled: true, maxRequestSize: 0},
+		});
 		worker.use(
 			mockCurrentUserEndpoint({
 				successResponse: HttpResponse.json(
@@ -307,7 +320,7 @@ describe('Processes element filter', () => {
 						items: [
 							createProcessDefinition({
 								processDefinitionId: 'orders',
-								version: 1,
+								version: 2,
 								tenantId: '<tenant-B>',
 								processDefinitionKey: '2002',
 							}),
@@ -316,12 +329,16 @@ describe('Processes element filter', () => {
 				),
 				failureResponse: INVALID_REQUEST,
 			}),
-			mockQueryProcessInstancesEndpoint({successResponse: EMPTY_INSTANCES}),
+			mockQueryProcessInstancesEndpoint({
+				schema: z.object({filter: z.object({tenantId: z.object({$eq: z.literal('<tenant-B>')})})}),
+				successResponse: EMPTY_INSTANCES,
+				failureResponse: INVALID_REQUEST,
+			}),
 			mockGetProcessDefinitionXmlEndpoint({successResponse: HttpResponse.text(BPMN_XML)}),
 			mockGetProcessDefinitionStatisticsEndpoint({successResponse: EMPTY_STATISTICS}),
 		);
 
-		const screen = await renderPage('?tenantId=%3Ctenant-B%3E&process=orders&version=1');
+		const screen = await renderPage('?tenantId=%3Ctenant-B%3E&process=orders&version=2');
 		await expect.element(screen.getByRole('combobox', {name: 'Element'})).toBeEnabled();
 		await userEvent.click(screen.getByRole('combobox', {name: 'Element'}));
 		await expect.element(screen.getByRole('option', {name: 'Review invoice'})).toBeVisible();

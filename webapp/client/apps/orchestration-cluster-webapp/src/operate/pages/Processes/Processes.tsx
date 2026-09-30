@@ -142,25 +142,23 @@ const Processes: React.FC<Props> = ({
 		}
 
 		const matches = data.items.filter((def) => def.processDefinitionId === process);
-
-		if (version === undefined) {
-			const first = matches[0];
-			return first === undefined
-				? {kind: 'no-match'}
-				: {kind: 'all-versions', definition: {name: first.name, processDefinitionId: first.processDefinitionId}};
-		}
-
-		const definitions = matches.filter((def) => def.version === version);
-		const definition = definitions[0];
+		const definition = version === undefined ? matches[0] : matches.find((candidate) => candidate.version === version);
 		if (definition === undefined) {
 			return {kind: 'no-match'};
 		}
-		if (!specificTenantId && definitions.some((candidate) => candidate.tenantId !== definition.tenantId)) {
+		if (!specificTenantId && matches.some((candidate) => candidate.tenantId !== definition.tenantId)) {
 			return {
 				kind: 'multiple-tenants',
 				definition: {name: definition.name, processDefinitionId: definition.processDefinitionId},
 			};
 		}
+		if (version === undefined) {
+			return {
+				kind: 'all-versions',
+				definition: {name: definition.name, processDefinitionId: definition.processDefinitionId},
+			};
+		}
+
 		return {kind: 'single-version', definition};
 	}, [data, process, specificTenantId, version]);
 	const selectedDefinitionKey =
