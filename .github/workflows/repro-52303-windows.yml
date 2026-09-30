@@ -1,0 +1,56 @@
+# THROWAWAY: reproduces #52303 on a Windows runner in a personal fork. Do not merge.
+name: Repro 52303 on Windows
+
+on:
+  push:
+    branches:
+      - 52303-windows-log-compaction-fails
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+jobs:
+  repro:
+    name: "Journal on Windows - ${{ matrix.variant }}"
+    runs-on: windows-latest
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        # without-fix: the fix commit's main-source change is reverted, but its regression test is kept
+        variant: [ with-fix, without-fix ]
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 3
+      - uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6 # v6.0.1
+        with:
+          distribution: temurin
+          java-version: "21"
+          cache: maven
+      - name: Standalone JDK repro
+        run: java .github/repro-52303/MappedRenameRepro.java
+      - name: Revert the fix
+        if: matrix.variant == 'without-fix'
+        # HEAD is this workflow commit, HEAD~1 is the fix
+        run: |
+          git diff HEAD~2 HEAD~1 -- zeebe/journal/src/main | git apply -R
+          git diff --stat
+      - name: Build journal and its dependencies
+        run: ./mvnw -B --no-transfer-progress install -pl zeebe/journal -am -Dquickly -T1C
+      - name: Run journal unit tests
+        run: >
+          ./mvnw -B --no-transfer-progress verify -pl zeebe/journal
+          -DskipTests=false -DskipITs -Dquickly -Dsurefire.rerunFailingTestsCount=0
+      - name: Upload surefire reports
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: surefire-${{ matrix.variant }}
+          path: zeebe/journal/target/surefire-reports/
+          if-no-files-found: ignore
